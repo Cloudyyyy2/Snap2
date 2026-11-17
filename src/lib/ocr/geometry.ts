@@ -479,7 +479,18 @@ export function detectDocumentQuad(
 
   const spanW = Math.max(cTR.x - cTL.x, cBR.x - cBL.x);
   const spanH = Math.max(cBL.y - cTL.y, cBR.y - cTR.y);
-  if (spanW < w * 0.3 || spanH < h * 0.3) return null;
+  if (spanW < w * 0.42 || spanH < h * 0.42) return null;
+
+  const quadArea =
+    0.5 *
+    Math.abs(
+      cTL.x * cTR.y -
+        cTR.x * cTL.y +
+        (cTR.x * cBR.y - cBR.x * cTR.y) +
+        (cBR.x * cBL.y - cBL.x * cBR.y) +
+        (cBL.x * cTL.y - cTL.x * cBL.y)
+    );
+  if (quadArea < w * h * 0.25) return null;
 
   // Trigger only when genuine keystone taper or edge tilt (>= 2.5% of frame dimension) is present
   const leftSkew = Math.abs(cTL.x - cBL.x);

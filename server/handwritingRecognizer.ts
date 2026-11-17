@@ -372,27 +372,58 @@ export async function processImageWithLocalOcr(params: {
   const { data: polarNormalized, inverted: darkInverted } = autoInvertIfDarkMode(rawGray, w, h);
   if (darkInverted) appliedSteps.push('color-inversion');
 
+  // Quick local contrast edge-energy estimator to verify perspective warp / border crop never discards the note's text
+  const measureStrokeEnergy = (buf: Uint8ClampedArray, bw: number, bh: number): number => {
+    let edges = 0;
+    const step = Math.max(1, Math.floor(Math.min(bw, bh) / 140));
+    for (let y = 1; y < bh - 1; y += step) {
+      const off = y * bw;
+      for (let x = 1; x < bw - 1; x += step) {
+        const dx = Math.abs(buf[off + x + 1] - buf[off + x - 1]);
+        const dy = Math.abs(buf[off + bw + x] - buf[off - bw + x]);
+        if (dx > 28 || dy > 28) edges++;
+      }
+    }
+    return edges;
+  };
+
   // Stage 2a & 3c: Perspective Quad Dewarping & Dark Border Cropping BEFORE illumination flattening
   // so dark desk surfaces retain contrast against the paper sheet rather than normalizing to 255
   let workGray = polarNormalized;
   let perspectiveWarped = false;
   let bordersCropped = false;
+  const preGeomEnergy = measureStrokeEnergy(workGray, w, h);
+
   const persp = correctDocumentPerspective(workGray, w, h);
   if (persp.warped) {
-    workGray = persp.data;
-    w = persp.width;
-    h = persp.height;
-    perspectiveWarped = true;
-    appliedSteps.push('perspective-dewarp');
+    const warpedEnergy = measureStrokeEnergy(persp.data, persp.width, persp.height);
+    // Keep perspective warp only if it preserves stroke/text detail (never crop away text into blank margin)
+    if (preGeomEnergy < 40 || warpedEnergy >= preGeomEnergy * 0.25) {
+      workGray = persp.data;
+      w = persp.width;
+      h = persp.height;
+      perspectiveWarped = true;
+      appliedSteps.push('perspective-dewarp');
+    }
   }
 
-  const croppedDoc = cropDarkBordersAndMargins(workGray, w, h);
-  if (croppedDoc.cropped) {
-    workGray = croppedDoc.data;
-    w = croppedDoc.width;
-    h = croppedDoc.height;
-    bordersCropped = true;
-    appliedSteps.push('border-crop');
+  if (!perspectiveWarped) {
+    const preCropEnergy = measureStrokeEnergy(workGray, w, h);
+    const croppedDoc = cropDarkBordersAndMargins(workGray, w, h);
+    if (croppedDoc.cropped) {
+      const croppedEnergy = measureStrokeEnergy(
+        croppedDoc.data,
+        croppedDoc.width,
+        croppedDoc.height
+      );
+      if (preCropEnergy < 40 || croppedEnergy >= preCropEnergy * 0.35) {
+        workGray = croppedDoc.data;
+        w = croppedDoc.width;
+        h = croppedDoc.height;
+        bordersCropped = true;
+        appliedSteps.push('border-crop');
+      }
+    }
   }
 
   // Stage 1b: Retinex Illumination Flattening across the isolated paper sheet
@@ -414,9 +445,15 @@ export async function processImageWithLocalOcr(params: {
     appliedSteps.push('bilateral-smooth');
   }
 
+  const getSauvolaParams = (cw: number, ch: number) => ({
+    radius: Math.max(14, Math.min(36, Math.round(Math.min(cw, ch) / 28))),
+    k: 0.16,
+  });
+
   // Stage 4b (Pass 1) + Stage 2b: Ruled-Line Cleanup & Projection Deskewing
   let noRules = removeRuledLines(workGray, w, h);
-  let binary = binarizeSauvola(noRules, w, h);
+  let sp = getSauvolaParams(w, h);
+  let binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
   let cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
 
   const deskew = deskewGrayscale(workGray, cleanBinary, w, h, { minCorrectionDeg: 0.6 });
@@ -424,7 +461,8 @@ export async function processImageWithLocalOcr(params: {
   if (deskew.corrected) {
     workGray = deskew.data;
     noRules = removeRuledLines(deskew.data, w, h);
-    binary = binarizeSauvola(noRules, w, h);
+    sp = getSauvolaParams(w, h);
+    binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
     cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
     appliedSteps.push(`deskew(${skewAngle}deg)`);
   }
@@ -449,7 +487,8 @@ export async function processImageWithLocalOcr(params: {
     noRules = new Uint8ClampedArray(upscaled.data.subarray(0, upscaled.info.width * upscaled.info.height));
     w = upscaled.info.width;
     h = upscaled.info.height;
-    binary = binarizeSauvola(noRules, w, h);
+    sp = getSauvolaParams(w, h);
+    binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
     cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
     appliedSteps.push(`dpi-upscale(${dpiScale}x)`);
   }

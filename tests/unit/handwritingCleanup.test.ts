@@ -345,4 +345,38 @@ describe('handwriting image cleanup & segmentation', () => {
     expect(regions.length).toBe(2);
     expect(regions[0].x1).toBeLessThan(regions[1].x0);
   });
+
+  it('cropDarkBordersAndMargins preserves central text even when an interior vertical rule or dense column lowers middle column brightness', async () => {
+    const { cropDarkBordersAndMargins } = await import(
+      '../../src/lib/ocr/handwriting/cleanup'
+    );
+    const w = 320;
+    const h = 220;
+    // Outer desk border (35) around shaded indoor paper (175)
+    const gray = new Uint8ClampedArray(w * h).fill(35);
+    for (let y = 20; y < 200; y++) {
+      for (let x = 24; x < 296; x++) {
+        gray[y * w + x] = 175;
+      }
+    }
+    // Vertical notebook margin line / heavy stroke column at x=120..124 splitting the sheet
+    for (let y = 22; y < 198; y++) {
+      for (let x = 120; x <= 124; x++) {
+        gray[y * w + x] = 45;
+      }
+    }
+    // Dense writing block on the right side (x=145..260, y=50..160)
+    for (let y = 50; y < 160; y++) {
+      for (let x = 145; x < 260; x++) {
+        if ((y % 18) < 10) gray[y * w + x] = 28;
+      }
+    }
+
+    const res = cropDarkBordersAndMargins(gray, w, h);
+    expect(res.cropped).toBe(true);
+    // Must keep both sides of the interior rule (width close to sheet width 272px, never cropped to just blank left margin)
+    expect(res.width).toBeGreaterThanOrEqual(250);
+    expect(res.bounds.x0).toBeLessThanOrEqual(30);
+    expect(res.bounds.x1).toBeGreaterThanOrEqual(285);
+  });
 });
