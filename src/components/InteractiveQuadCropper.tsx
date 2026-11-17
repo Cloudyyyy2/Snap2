@@ -55,6 +55,7 @@ export const InteractiveQuadCropper: React.FC<InteractiveQuadCropperProps> = ({
   const [isDetecting, setIsDetecting] = useState(true);
   const [isDewarping, setIsDewarping] = useState(false);
   const [autoDetected, setAutoDetected] = useState(false);
+  const [detectedMode, setDetectedMode] = useState<'sheet' | 'text-block' | 'inset'>('inset');
 
   // Loupe position state
   const [loupePoint, setLoupePoint] = useState<Point2D | null>(null);
@@ -113,6 +114,7 @@ export const InteractiveQuadCropper: React.FC<InteractiveQuadCropperProps> = ({
           { x: res.normalizedQuad[3].x, y: res.normalizedQuad[3].y },
         ]);
         setAutoDetected(res.autoDetected);
+        setDetectedMode(res.mode);
       })
       .catch((err) => {
         console.warn('Auto perimeter detection fallback:', err);
@@ -253,6 +255,7 @@ export const InteractiveQuadCropper: React.FC<InteractiveQuadCropperProps> = ({
         { x: res.normalizedQuad[3].x, y: res.normalizedQuad[3].y },
       ]);
       setAutoDetected(res.autoDetected);
+      setDetectedMode(res.mode);
     } catch {
       handleResetToInset();
     } finally {
@@ -424,8 +427,10 @@ export const InteractiveQuadCropper: React.FC<InteractiveQuadCropperProps> = ({
             <Crop className="w-3.5 h-3.5" />
             <span>
               {autoDetected
-                ? 'Document Perimeter Auto-Detected'
-                : 'Adjust 4 corners to fit document'}
+                ? detectedMode === 'sheet'
+                  ? 'Sheet Perimeter Detected'
+                  : 'Text Block Auto-Anchored'
+                : 'Adjust 4 corners to fit text'}
             </span>
           </span>
 

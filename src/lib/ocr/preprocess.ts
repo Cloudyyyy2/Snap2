@@ -863,6 +863,106 @@ export function preprocessForOcr(
 }
 
 /**
+ * Two-pass local multi-scale image enhancement with contour voting.
+ * - Pass 1: Standard adaptive Sauvola thresholding capturing baseline layout and stroke bodies.
+ * - Pass 2: High-contrast stroke sharpening with fine-structure recovery for thin or faded ink lines.
+ * - Contour Voting: Performs consensus voting across both representations:
+ *   - Retains ink pixels confirmed by both passes.
+ *   - Retains fine stroke details with neighborhood contour support.
+ *   - Suppresses isolated background salt-and-pepper noise and shadow gradients.
+ */
+export function twoPassContourVoting(
+  gray: Uint8ClampedArray,
+  w: number,
+  h: number,
+  options: { sauvolaWindowRadius?: number; sauvolaK?: number } = {}
+): { binary: Uint8ClampedArray; enhancedGray: Uint8ClampedArray; inkRatio: number } {
+  const winR = options.sauvolaWindowRadius ?? 16;
+  const k1 = options.sauvolaK ?? 0.18;
+  const pass1 = binarizeSauvola(gray, w, h, winR, k1);
+
+  // Pass 2: High-pass Laplacian unsharp mask for recovering thin / faded pen strokes
+  const sharpenedGray = new Uint8ClampedArray(w * h);
+  sharpenedGray.set(gray);
+
+  for (let y = 1; y < h - 1; y++) {
+    const rowOff = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const c = gray[rowOff + x];
+      const top = gray[rowOff - w + x];
+      const bot = gray[rowOff + w + x];
+      const left = gray[rowOff + x - 1];
+      const right = gray[rowOff + x + 1];
+      const laplacian = 5 * c - (top + bot + left + right);
+      sharpenedGray[rowOff + x] = Math.max(0, Math.min(255, laplacian));
+    }
+  }
+
+  const pass2 = binarizeSauvola(sharpenedGray, w, h, Math.max(8, Math.round(winR * 0.75)), 0.24);
+
+  // Contour Consensus Voting
+  const fused = new Uint8ClampedArray(w * h).fill(255);
+  let totalInk = 0;
+
+  for (let i = 0; i < w * h; i++) {
+    const isInk1 = pass1[i] === 0;
+    const isInk2 = pass2[i] === 0;
+
+    if (isInk1 && isInk2) {
+      fused[i] = 0;
+      totalInk++;
+    } else if (isInk1 || isInk2) {
+      const x = i % w;
+      const y = Math.floor(i / w);
+      if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+        let neighborInkCount = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nIdx = (y + dy) * w + (x + dx);
+            if (pass1[nIdx] === 0 || pass2[nIdx] === 0) {
+              neighborInkCount++;
+            }
+          }
+        }
+        if (neighborInkCount >= 3) {
+          fused[i] = 0;
+          totalInk++;
+        }
+      }
+    }
+  }
+
+  // Post-filter isolated speckles (noise pixels with zero adjacent ink neighbors)
+  for (let y = 1; y < h - 1; y++) {
+    const rowOff = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const idx = rowOff + x;
+      if (fused[idx] === 0) {
+        let neighborCount = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            if (fused[(y + dy) * w + (x + dx)] === 0) {
+              neighborCount++;
+            }
+          }
+        }
+        if (neighborCount === 0) {
+          fused[idx] = 255;
+          totalInk--;
+        }
+      }
+    }
+  }
+
+  const enhancedGray = enhanceInkContrast(gray, w, h);
+  const inkRatio = totalInk / Math.max(1, w * h);
+
+  return { binary: fused, enhancedGray, inkRatio };
+}
+
+/**
  * Convenience wrapper for browser Canvas `ImageData` (RGBA) objects.
  */
 export function preprocessImageData(

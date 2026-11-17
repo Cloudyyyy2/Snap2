@@ -12,6 +12,7 @@ import {
   FileText,
   Clock,
   Crop,
+  CheckCircle2,
 } from 'lucide-react';
 import { CameraCapture } from './CameraCapture';
 import { Reminder, Category, Priority, ChecklistItem, DetectedStyle } from '../types';
@@ -39,6 +40,9 @@ interface ScanExtractionMeta {
   appliedSteps?: string[];
   skewAngle?: number;
   regionsCount?: number;
+  accuracyScore?: number;
+  verifiedWords?: number;
+  totalWords?: number;
 }
 
 interface DraftReminderState {
@@ -276,6 +280,9 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                 : undefined,
               skewAngle: localData.skewAngle,
               regionsCount: localData.regionsCount,
+              accuracyScore: localData.accuracyScore,
+              verifiedWords: localData.verifiedWords,
+              totalWords: localData.totalWords,
             });
             recordRecentScan(image, localData.text || 'Scanned note', label);
 
@@ -908,11 +915,21 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                         </div>
                       )}
                     </div>
-                    {scanMeta?.appliedSteps && scanMeta.appliedSteps.length > 0 && (
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono-nums truncate">
-                        {scanMeta.appliedSteps.slice(0, 5).join(' · ')}
-                      </p>
-                    )}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      {scanMeta?.appliedSteps && scanMeta.appliedSteps.length > 0 && (
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono-nums truncate">
+                          {scanMeta.appliedSteps.slice(0, 5).join(' · ')}
+                        </p>
+                      )}
+                      {scanMeta?.accuracyScore !== undefined && (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                          <span>
+                            {scanMeta.accuracyScore}% Accuracy · {scanMeta.verifiedWords ?? 0} words verified
+                          </span>
+                        </span>
+                      )}
+                    </div>
                     <textarea
                       rows={5}
                       value={editableText}

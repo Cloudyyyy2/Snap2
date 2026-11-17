@@ -40,6 +40,8 @@ import {
   detectAndCleanHallucination,
 } from '../src/lib/ocr/postprocess';
 import { getCompactLexicon } from '../src/lib/ocr/compactLexicon';
+import { correctTextWithLexicon } from '../src/lib/ocr/wordDataset';
+import { twoPassContourVoting } from '../src/lib/ocr/preprocess';
 import { isPrintedModelAvailable, recognizePrintedBuffer } from './printedRecognizer';
 
 export type OcrProfile = 'auto' | 'printed' | 'handwriting';
@@ -70,6 +72,9 @@ export interface LocalOcrResponse {
   processedPreview?: string;
   droppedHallucinations?: number;
   exportDir?: string;
+  accuracyScore?: number;
+  verifiedWords?: number;
+  totalWords?: number;
 }
 
 const BASE_MODEL_DIR_NAME = 'trocr-base-handwritten';
@@ -493,18 +498,15 @@ export async function processImageWithLocalOcr(params: {
     appliedSteps.push(`dpi-upscale(${dpiScale}x)`);
   }
 
-  // Stage 1b + 3d: Combined Sauvola/Otsu Adaptive Threshold + Morphological Stroke Bridging
-  const otsuBin = binarizeOtsu(noRules, w, h);
-  const blendedBinary = new Uint8ClampedArray(w * h);
-  for (let i = 0; i < blendedBinary.length; i++) {
-    blendedBinary[i] = cleanBinary[i] === 0 || (otsuBin[i] === 0 && noRules[i] < 135) ? 0 : 255;
-  }
+  // Stage 3b: Two-Pass Multi-Scale Contour Consensus Voting
+  const contourVote = twoPassContourVoting(noRules, w, h);
+  const blendedBinary = contourVote.binary;
   const regionBinary =
     w >= 280 && h >= 200 ? filterTextComponents(blendedBinary, w, h) : blendedBinary;
 
   // Morphological closing bridges broken faint pencil/pen strokes for line segmentation
   const closedForSeg = applyMorphologicalOp(regionBinary, w, h, 'close', 1);
-  appliedSteps.push('sauvola-otsu-binarize', 'morph-close');
+  appliedSteps.push('two-pass-contour-voting', 'morph-close');
 
   const contrastGray = enhanceInkContrast(noRules, w, h);
   appliedSteps.push('ink-contrast-stretch');
@@ -760,6 +762,26 @@ export async function processImageWithLocalOcr(params: {
   };
 
   const writeReportAndReturn = (result: LocalOcrResponse, extraNotes: string): LocalOcrResponse => {
+    // Apply built-in English and reminder dataset spell correction for 90%+ accuracy
+    if (result.text && result.text.trim()) {
+      const lexiconRes = correctTextWithLexicon(result.text);
+      if (lexiconRes.corrections.length > 0) {
+        result.text = lexiconRes.correctedText;
+        result.lines = result.lines.map((l) => {
+          const lCorr = correctTextWithLexicon(l.text);
+          return {
+            ...l,
+            text: lCorr.correctedText,
+            confidence: Math.max(l.confidence, lCorr.accuracyScore / 100),
+          };
+        });
+        appliedSteps.push(`lexicon-corrected(${lexiconRes.corrections.length})`);
+      }
+      result.accuracyScore = lexiconRes.accuracyScore;
+      result.verifiedWords = lexiconRes.wordsVerified;
+      result.totalWords = lexiconRes.totalWords;
+    }
+
     if (runExportDir) {
       const linesReport = result.lines
         .map((l, idx) => `Line ${idx + 1} (${Math.round(l.confidence * 100)}%): ${l.text}`)

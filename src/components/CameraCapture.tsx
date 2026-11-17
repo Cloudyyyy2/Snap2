@@ -10,6 +10,7 @@ import {
   Check,
   Square,
   Sparkles,
+  Scan,
 } from 'lucide-react';
 import {
   detectWordsOnImage,
@@ -17,6 +18,10 @@ import {
   WordDetectionResult,
   DetectedWordSquare,
 } from '../lib/ocr/onDeviceWordDetector';
+import {
+  analyzeViewfinderFrame,
+  ViewfinderAnalysis,
+} from '../lib/ocr/documentEdgeDetector';
 import { InteractiveQuadCropper } from './InteractiveQuadCropper';
 
 interface CameraCaptureProps {
@@ -64,6 +69,11 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
   const [selectedWord, setSelectedWord] = useState<DetectedWordSquare | null>(null);
   const [isDetectingWords, setIsDetectingWords] = useState(false);
   const [isApplyingCrop, setIsApplyingCrop] = useState(false);
+
+  // Live optical framing reticle & tilt analysis states
+  const [showReticleGuide, setShowReticleGuide] = useState(true);
+  const [viewfinderAnalysis, setViewfinderAnalysis] = useState<ViewfinderAnalysis | null>(null);
+  const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -463,6 +473,40 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
 
   const liveReady = !isStarting && !errorMsg && !paused;
 
+  // Background frame inspection for live optical reticle & tilt guidance
+  useEffect(() => {
+    if (!liveReady || !showReticleGuide || pendingCropImage || pendingDewarpImage) {
+      return;
+    }
+
+    if (!analysisCanvasRef.current) {
+      analysisCanvasRef.current = document.createElement('canvas');
+      analysisCanvasRef.current.width = 120;
+      analysisCanvasRef.current.height = 90;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const video = videoRef.current;
+      const canvas = analysisCanvasRef.current;
+      if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) return;
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const analysis = analyzeViewfinderFrame(canvas);
+        setViewfinderAnalysis(analysis);
+      } catch {
+        // ignore occasional cross-frame draw race
+      }
+    }, 240);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [liveReady, showReticleGuide, pendingCropImage, pendingDewarpImage]);
+
   // When a photo has been captured or selected and autoDewarp is active, present the interactive 4-corner quad cropper
   if (pendingDewarpImage) {
     return (
@@ -602,13 +646,94 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
           />
         )}
 
-        {/* Subtle alignment reticle guides when camera stream is active */}
-        {!pendingCropImage && liveReady && (
-          <div className="pointer-events-none absolute inset-6 sm:inset-8">
-            <div className="absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 border-white/55 rounded-tl-md" />
-            <div className="absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 border-white/55 rounded-tr-md" />
-            <div className="absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 border-white/55 rounded-bl-md" />
-            <div className="absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 border-white/55 rounded-br-md" />
+        {/* Dynamic Live Optical Reticle Guide HUD */}
+        {!pendingCropImage && liveReady && showReticleGuide && (
+          <div className="pointer-events-none absolute inset-6 sm:inset-8 flex flex-col justify-between z-20">
+            {/* Top Reticle Brackets */}
+            <div className="flex justify-between items-start">
+              <div
+                className={`w-7 h-7 border-t-2 border-l-2 rounded-tl-lg transition-all duration-300 ${
+                  viewfinderAnalysis?.framingQuality === 'optimal'
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
+                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
+                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                      : 'border-white/50'
+                }`}
+              />
+              <div
+                className={`w-7 h-7 border-t-2 border-r-2 rounded-tr-lg transition-all duration-300 ${
+                  viewfinderAnalysis?.framingQuality === 'optimal'
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
+                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
+                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                      : 'border-white/50'
+                }`}
+              />
+            </div>
+
+            {/* Center Status Feedback & Pitch/Tilt Level Gauge */}
+            <div className="flex flex-col items-center justify-center gap-2 my-auto">
+              {viewfinderAnalysis && (
+                <div
+                  className={`px-3 py-1 rounded-full text-[11px] font-medium backdrop-blur-md border transition-all duration-300 flex items-center gap-1.5 shadow-md ${
+                    viewfinderAnalysis.framingQuality === 'optimal'
+                      ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/50 ring-2 ring-emerald-500/25'
+                      : viewfinderAnalysis.framingQuality === 'leveling-needed'
+                        ? 'bg-cyan-950/85 text-cyan-300 border-cyan-500/50 ring-2 ring-cyan-500/25'
+                        : 'bg-zinc-950/75 text-zinc-300 border-zinc-700/60'
+                  }`}
+                >
+                  <div
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      viewfinderAnalysis.framingQuality === 'optimal'
+                        ? 'bg-emerald-400 animate-pulse'
+                        : viewfinderAnalysis.framingQuality === 'leveling-needed'
+                          ? 'bg-cyan-400'
+                          : 'bg-zinc-500'
+                    }`}
+                  />
+                  <span>{viewfinderAnalysis.message}</span>
+                </div>
+              )}
+
+              {/* Horizontal leveling gauge */}
+              {viewfinderAnalysis && viewfinderAnalysis.isTextInFrame && (
+                <div className="w-28 h-1.5 bg-black/50 backdrop-blur-sm rounded-full overflow-hidden border border-white/20 relative flex items-center">
+                  <div
+                    style={{
+                      transform: `translateX(${Math.max(-44, Math.min(44, (viewfinderAnalysis.estimatedTiltDeg / 15) * 44))}px)`,
+                    }}
+                    className={`w-3 h-full m-auto rounded-full transition-transform duration-150 ${
+                      Math.abs(viewfinderAnalysis.estimatedTiltDeg) <= 3.5
+                        ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'
+                        : 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.8)]'
+                    }`}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Reticle Brackets */}
+            <div className="flex justify-between items-end">
+              <div
+                className={`w-7 h-7 border-b-2 border-l-2 rounded-bl-lg transition-all duration-300 ${
+                  viewfinderAnalysis?.framingQuality === 'optimal'
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
+                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
+                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                      : 'border-white/50'
+                }`}
+              />
+              <div
+                className={`w-7 h-7 border-b-2 border-r-2 rounded-br-lg transition-all duration-300 ${
+                  viewfinderAnalysis?.framingQuality === 'optimal'
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
+                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
+                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                      : 'border-white/50'
+                }`}
+              />
+            </div>
           </div>
         )}
 
@@ -944,6 +1069,20 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
               >
                 <Crop className="w-3 h-3" />
                 <span>{autoSquareCrop ? 'Words Square: ON' : 'Words: OFF'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowReticleGuide((v) => !v)}
+                className={`min-h-[32px] px-2.5 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                  showReticleGuide
+                    ? 'border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                    : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400'
+                }`}
+                title="Live optical framing reticle & tilt guidance"
+              >
+                <Scan className="w-3 h-3 text-emerald-500" />
+                <span>{showReticleGuide ? 'Reticle: ON' : 'Reticle: OFF'}</span>
               </button>
             </div>
 

@@ -48,6 +48,7 @@ export {
   applyMorphologicalOp,
   preprocessForOcr,
   preprocessImageData,
+  twoPassContourVoting,
 } from '../preprocess';
 
 export {
