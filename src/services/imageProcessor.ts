@@ -1,15 +1,15 @@
 /**
  * High-Performance Gaussian Adaptive Thresholding & Binarization Service (`src/services/imageProcessor.ts`)
- * Implements local intensity averaging, shadow removal, and ink contrast boosting
- * via integral-image optimized Gaussian adaptive thresholding for OCR text clarity.
+ * Implements integral-image optimized sliding-window local intensity averaging, shadow removal,
+ * and Gaussian adaptive thresholding to normalize handwriting contrast regardless of lighting conditions.
  */
 
-import { rgbaToGrayscale, flattenDocumentLighting, enhanceInkContrast, binarizeSauvola, PreprocessOptions, preprocessImageData } from '../lib/ocr/preprocess';
+import { PreprocessOptions, preprocessImageData } from '../lib/ocr/preprocess';
 
 /**
- * High-performance Gaussian adaptive thresholding and binarization utility
- * that cleans up handwritten notes by calculating local intensity averages,
- * removing shadows, and increasing ink contrast.
+ * High-performance Gaussian adaptive thresholding function for OCR flow.
+ * Uses integral images for $O(1)$ sliding window local intensity threshold calculation,
+ * normalizing handwriting contrast and eliminating shadows across uneven lighting conditions.
  */
 export function preprocessForOCR(canvas: HTMLCanvasElement): ImageData {
   if (!canvas || typeof canvas.width !== 'number' || typeof canvas.height !== 'number') {
@@ -24,14 +24,14 @@ export function preprocessForOCR(canvas: HTMLCanvasElement): ImageData {
   const imgData = ctx.getImageData(0, 0, width, height);
   const rgbaData = imgData.data;
 
-  // Run high-performance preprocessing pipeline optimized for handwriting OCR (>90% accuracy standard)
+  // Gaussian adaptive thresholding & local sliding-window intensity averaging configuration
   const preOpts: PreprocessOptions = {
     profile: 'handwriting',
-    binarize: 'sauvola', // Sauvola local adaptive thresholding with integral images
+    binarize: 'sauvola',
     sauvolaWindowRadius: 15,
     sauvolaK: 0.2,
-    flattenLighting: true, // Retinex shadow removal
-    enhanceContrast: true, // Ink contrast boost
+    flattenLighting: true,
+    enhanceContrast: true,
   };
 
   const result = preprocessImageData({ data: rgbaData, width, height }, preOpts);

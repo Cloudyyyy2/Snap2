@@ -8,6 +8,7 @@ import {
 import { rgbaToGrayscale, binarizeSauvola, flattenDocumentLighting } from './preprocess';
 import { segmentLines, LineBox } from './handwriting/lines';
 import { removeRuledLines } from './handwriting/cleanup';
+import { preprocessForOCR } from '../../services/imageProcessor';
 
 export interface NormalizedPoint {
   x: number; // 0..1
@@ -221,8 +222,10 @@ export async function detectDocumentPerimeter(
 
   const workW = canvas.width;
   const workH = canvas.height;
-  const imgData = ctx.getImageData(0, 0, workW, workH);
-  const gray = rgbaToGrayscale(imgData.data, workW, workH);
+
+  // Apply high-performance adaptive thresholding & shadow removal for robust cropping
+  const enhancedImageData = preprocessForOCR(canvas);
+  const gray = rgbaToGrayscale(enhancedImageData.data, workW, workH);
 
   // 1. Try detecting full sheet perimeter against desk/background
   const detectedSheet = detectDocumentQuad(gray, workW, workH);
