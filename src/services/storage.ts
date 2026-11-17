@@ -85,6 +85,8 @@ interface ReminderMeta {
   tags?: string[];
   starred?: boolean;
   image?: string;
+  ocrText?: string;
+  ocrEngine?: string;
 }
 
 function getMetaMap(): Record<string, ReminderMeta> {
@@ -105,6 +107,8 @@ function saveReminderMeta(reminder: Reminder): void {
       tags: reminder.tags,
       starred: reminder.starred,
       image: reminder.image,
+      ocrText: reminder.ocrText,
+      ocrEngine: reminder.ocrEngine,
     };
     localStorage.setItem(META_STORAGE_KEY, JSON.stringify(map));
   } catch (err) {
@@ -166,6 +170,8 @@ export async function fetchSupabaseReminders(userId: string): Promise<Reminder[]
       checklist: meta.checklist || [],
       tags: meta.tags || ['cloud'],
       image: row.image_path || meta.image,
+      ocrText: meta.ocrText,
+      ocrEngine: meta.ocrEngine,
       completed: Boolean(row.sent),
       starred: Boolean(meta.starred),
       createdAt: row.created_at || new Date().toISOString(),

@@ -86,6 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const views = [
+    { id: 'scan', label: 'OCR Studio', icon: <Camera className="w-4 h-4" /> },
     { id: 'all', label: 'Inbox', icon: <Inbox className="w-4 h-4" /> },
     { id: 'today', label: 'Today', icon: <Calendar className="w-4 h-4" /> },
     { id: 'upcoming', label: 'Upcoming', icon: <Clock className="w-4 h-4" /> },
@@ -124,7 +125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center gap-1">
           <button
             onClick={onToggleTheme}
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/70 transition-colors"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/70 transition-colors"
             title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             aria-label="Toggle theme"
           >
@@ -132,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
           <button
             onClick={onCloseMobile}
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 lg:hidden"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 lg:hidden"
             aria-label="Close navigation"
           >
             <X className="w-4 h-4" />
@@ -144,18 +145,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-3 space-y-1.5">
         <button
           onClick={() => handleNavClick(onOpenUpload)}
-          className="w-full flex items-center justify-between px-3 py-2 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+          className="w-full min-h-[42px] flex items-center justify-between px-3 py-2 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-medium rounded-xl transition-colors whitespace-nowrap"
         >
           <span className="flex items-center gap-2">
             <Camera className="w-3.5 h-3.5" />
-            <span>Scan Screenshot</span>
+            <span>Scan Note / Photo</span>
           </span>
           <kbd className="font-mono-nums text-[10px] text-indigo-100/80">S</kbd>
         </button>
 
         <button
           onClick={() => handleNavClick(onOpenAdd)}
-          className="w-full flex items-center justify-between px-3 py-2 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800/90 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+          className="w-full min-h-[40px] flex items-center justify-between px-3 py-2 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800/90 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 text-xs font-medium rounded-xl transition-colors whitespace-nowrap"
         >
           <span className="flex items-center gap-2">
             <Plus className="w-3.5 h-3.5 text-zinc-500" />

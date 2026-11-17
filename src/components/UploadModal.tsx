@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Camera, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Reminder } from '../types';
+import { CameraCapture } from './CameraCapture';
 
 export type OcrProfile = 'auto' | 'printed' | 'handwriting';
 
@@ -44,8 +45,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [ocrState, setOcrState] = useState<LocalOcrState | null>(null);
   const [editableText, setEditableText] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [statusStep, setStatusStep] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -362,7 +365,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </span>
           </div>
 
-          {imagePreview ? (
+          {isCameraOpen ? (
+            <CameraCapture
+              onCapture={(dataUrl) => {
+                setImagePreview(dataUrl);
+                setImageBase64(dataUrl);
+                setIsCameraOpen(false);
+                setOcrState(null);
+                setEditableText('');
+                setErrorMsg(null);
+              }}
+              onClose={() => setIsCameraOpen(false)}
+            />
+          ) : imagePreview ? (
             <div className="relative rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 h-48 flex items-center justify-center">
               <img
                 src={imagePreview}
@@ -385,28 +400,61 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </button>
             </div>
           ) : (
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-              className="border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-indigo-500 dark:hover:border-indigo-500 rounded-xl p-8 text-center bg-zinc-50/70 dark:bg-zinc-950/50 transition-colors cursor-pointer flex flex-col items-center justify-center gap-2.5 relative"
-            >
+            <div className="space-y-2.5">
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+                className="border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-indigo-500 dark:hover:border-indigo-500 rounded-xl p-7 text-center bg-zinc-50/70 dark:bg-zinc-950/50 transition-colors cursor-pointer flex flex-col items-center justify-center gap-2.5 relative"
+              >
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+                <div className="w-10 h-10 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    Drop a note or screenshot here or{' '}
+                    <span className="text-indigo-600 dark:text-indigo-400">browse</span>
+                  </p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Handwritten lists, lined notebook pages, bills, receipts, or tickets
+                  </p>
+                </div>
+              </div>
+
               <input
+                ref={nativeCameraInputRef}
                 type="file"
                 accept="image/*"
+                capture="environment"
                 onChange={handleFileChange}
-                className="absolute inset-0 opacity-0 cursor-pointer"
+                className="hidden"
               />
-              <div className="w-10 h-10 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center">
-                <Upload className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  Drop a note or screenshot here or{' '}
-                  <span className="text-indigo-600 dark:text-indigo-400">browse</span>
-                </p>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Handwritten lists, lined notebook pages, bills, receipts, or tickets
-                </p>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg(null);
+                    setIsCameraOpen(true);
+                  }}
+                  className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 text-xs font-medium text-zinc-800 dark:text-zinc-200 inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                >
+                  <Camera className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                  <span>Open Live Camera</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => nativeCameraInputRef.current?.click()}
+                  className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                >
+                  <Camera className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />
+                  <span>Device Camera</span>
+                </button>
               </div>
             </div>
           )}

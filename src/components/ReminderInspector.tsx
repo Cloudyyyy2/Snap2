@@ -114,32 +114,35 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
   const completedSteps = reminder.checklist.filter((c) => c.completed).length;
 
   const panelBody = (
-    <div className="flex flex-col h-full bg-white dark:bg-zinc-950 border-l border-zinc-200 dark:border-zinc-800/80">
+    <div className="flex flex-col h-full bg-white dark:bg-zinc-950 xl:border-l border-zinc-200 dark:border-zinc-800/80 rounded-t-3xl xl:rounded-none overflow-hidden">
+      {/* Mobile Drag Handle */}
+      <div className="w-10 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto mt-3 mb-1 xl:hidden shrink-0" />
+
       {/* Top Action Bar */}
       <div className="h-14 px-4 border-b border-zinc-200 dark:border-zinc-800/80 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => onUpdate({ ...reminder, completed: !reminder.completed })}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+            className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap ${
               reminder.completed
                 ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
                 : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-800'
             }`}
           >
             {reminder.completed ? (
-              <CheckCircle2 className="w-3.5 h-3.5" />
+              <CheckCircle2 className="w-4 h-4" />
             ) : (
-              <Circle className="w-3.5 h-3.5" />
+              <Circle className="w-4 h-4" />
             )}
             <span>{reminder.completed ? 'Completed' : 'Mark done'}</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           {pushEnabled && onSendPushReminder && (
             <button
               onClick={() => onSendPushReminder(reminder)}
-              className="p-2 rounded-lg text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
+              className="min-h-[44px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
               title="Send push alert for this reminder"
             >
               <Send className="w-4 h-4" />
@@ -147,7 +150,7 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
           )}
           <button
             onClick={() => onUpdate({ ...reminder, starred: !reminder.starred })}
-            className={`p-2 rounded-lg transition-colors ${
+            className={`min-h-[44px] min-w-[40px] flex items-center justify-center rounded-xl transition-colors ${
               reminder.starred
                 ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/40'
                 : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900'
@@ -158,14 +161,14 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
           </button>
           <button
             onClick={() => onDelete(reminder.id)}
-            className="p-2 rounded-lg text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+            className="min-h-[44px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
             title="Delete reminder"
           >
             <Trash2 className="w-4 h-4" />
           </button>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
+            className="min-h-[44px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
             title="Close inspector"
           >
             <X className="w-4 h-4" />
@@ -385,24 +388,24 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
           />
         </div>
 
-        {/* Screenshot Attachment */}
+        {/* Screenshot Attachment & OCR Source */}
         {reminder.image && (
-          <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-5 space-y-2">
+          <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-5 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                Source Screenshot
+                Source Scan{reminder.ocrEngine ? ` · ${reminder.ocrEngine}` : ''}
               </span>
               <button
                 type="button"
                 onClick={() => setLightboxOpen(true)}
-                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1"
+                className="min-h-[36px] text-xs text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1"
               >
                 <Maximize2 className="w-3 h-3" /> Expand
               </button>
             </div>
             <div
               onClick={() => setLightboxOpen(true)}
-              className="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 cursor-zoom-in"
+              className="rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 cursor-zoom-in"
             >
               <img
                 src={reminder.image}
@@ -411,6 +414,11 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
                 className="w-full max-h-56 object-contain"
               />
             </div>
+            {reminder.ocrText && (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap leading-relaxed bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 rounded-xl p-3">
+                {reminder.ocrText}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -424,13 +432,13 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
         {panelBody}
       </aside>
 
-      {/* Tablet / Mobile Slide-Over Drawer */}
+      {/* Mobile / Tablet Slide-Up Bottom Sheet */}
       <div
-        className="fixed inset-0 z-40 xl:hidden flex justify-end bg-zinc-950/50 backdrop-blur-[2px]"
+        className="fixed inset-0 z-50 xl:hidden flex items-end justify-center bg-zinc-950/60 backdrop-blur-[2px]"
         onClick={onClose}
       >
         <div
-          className="w-full max-w-md h-full shadow-2xl"
+          className="w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {panelBody}

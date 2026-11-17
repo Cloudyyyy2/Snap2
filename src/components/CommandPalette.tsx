@@ -55,7 +55,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const quickActions = [
     {
       id: 'act-scan',
-      label: 'Scan Screenshot with AI',
+      label: 'Open OCR Studio',
       shortcut: 'S',
       icon: <Camera className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />,
       run: () => {
@@ -86,6 +86,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   ].filter((a) => !q || a.label.toLowerCase().includes(q));
 
   const viewActions = [
+    { id: 'scan', label: 'Go to OCR Studio', icon: <Camera className="w-4 h-4" /> },
     { id: 'all', label: 'Go to Inbox', icon: <Inbox className="w-4 h-4" /> },
     { id: 'today', label: 'Go to Today', icon: <Calendar className="w-4 h-4" /> },
     { id: 'upcoming', label: 'Go to Upcoming', icon: <Clock className="w-4 h-4" /> },

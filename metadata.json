@@ -1,6 +1,6 @@
 {
   "name": "SnapRemind",
   "description": "AI-powered screenshot and photo reminder assistant that extracts tasks and dates from images instantly.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

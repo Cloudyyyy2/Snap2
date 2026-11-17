@@ -9,16 +9,18 @@ interface NavbarProps {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   onOpenCommandPalette: () => void;
-  onOpenUpload: () => void;
+  onOpenScan: () => void;
   onOpenMobileMenu: () => void;
 }
 
 const FILTER_LABELS: Record<string, string> = {
+  scan: 'OCR Studio',
   all: 'Inbox',
   today: 'Today',
   upcoming: 'Upcoming',
   starred: 'Starred',
   completed: 'Completed',
+  search: 'Search',
 };
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -28,28 +30,29 @@ export const Navbar: React.FC<NavbarProps> = ({
   searchQuery,
   setSearchQuery,
   onOpenCommandPalette,
-  onOpenUpload,
+  onOpenScan,
   onOpenMobileMenu,
 }) => {
-  const viewTitle = FILTER_LABELS[currentFilter] || 'Inbox';
+  const viewTitle = FILTER_LABELS[currentFilter] || 'OCR Studio';
+  const isScanView = currentFilter === 'scan';
 
   return (
-    <header className="sticky top-0 z-20 h-14 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800/80 px-4 lg:px-6 flex items-center justify-between gap-4">
+    <header className="sticky top-0 z-20 h-[52px] lg:h-14 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800/80 px-3 lg:px-6 flex items-center justify-between gap-3">
       {/* Left Zone: Mobile Menu + Breadcrumb */}
-      <div className="flex items-center gap-3 min-w-0 shrink-0">
+      <div className="flex items-center gap-2 min-w-0 shrink-0">
         <button
           onClick={onOpenMobileMenu}
-          className="p-2 -ml-1 rounded-lg text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 lg:hidden"
-          aria-label="Open navigation"
+          className="min-h-[44px] min-w-[44px] -ml-1.5 flex items-center justify-center rounded-xl text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 lg:hidden"
+          aria-label="Open menu and settings"
         >
-          <Menu className="w-4 h-4" />
+          <Menu className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-2 text-sm whitespace-nowrap">
           <span className="font-display font-semibold text-zinc-900 dark:text-zinc-100">
             {viewTitle}
           </span>
-          {selectedCategory !== 'All' && (
+          {selectedCategory !== 'All' && !isScanView && (
             <>
               <span className="text-zinc-400 dark:text-zinc-600">/</span>
               <span className="font-medium text-zinc-600 dark:text-zinc-300">
@@ -57,14 +60,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               </span>
             </>
           )}
-          <span className="text-zinc-300 dark:text-zinc-700 hidden sm:inline">·</span>
-          <span className="font-mono-nums text-xs text-zinc-500 dark:text-zinc-400 hidden sm:inline">
-            {activeCount} open
-          </span>
+          {!isScanView && (
+            <>
+              <span className="text-zinc-300 dark:text-zinc-700 hidden sm:inline">·</span>
+              <span className="font-mono-nums text-xs text-zinc-500 dark:text-zinc-400 hidden sm:inline">
+                {activeCount} open
+              </span>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Center Zone: Clean Filter + Cmd+K Trigger */}
+      {/* Center Zone: Clean Filter + Cmd+K Trigger (Desktop) */}
       <div className="flex-1 max-w-md hidden sm:flex items-center">
         <div className="relative w-full">
           <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -95,23 +102,17 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* Right Zone: Single Primary Action */}
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          onClick={onOpenCommandPalette}
-          className="p-2 rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-900 sm:hidden"
-          aria-label="Search reminders"
-        >
-          <Search className="w-4 h-4" />
-        </button>
-
-        <button
-          onClick={onOpenUpload}
-          className="px-3.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-white dark:text-zinc-900 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
-        >
-          <Camera className="w-3.5 h-3.5" />
-          <span>AI Scan</span>
-        </button>
+      {/* Right Zone: Single Contextual Action */}
+      <div className="flex items-center gap-1.5 shrink-0">
+        {!isScanView && (
+          <button
+            onClick={onOpenScan}
+            className="min-h-[40px] px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>Scan</span>
+          </button>
+        )}
       </div>
     </header>
   );

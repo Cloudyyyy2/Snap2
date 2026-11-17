@@ -57,21 +57,21 @@ export const ReminderCard: React.FC<ReminderCardProps> = ({
     return (
       <div
         onClick={onClick}
-        className={`group flex items-center justify-between gap-4 px-4 py-3 border-b border-zinc-200/80 dark:border-zinc-800/80 cursor-pointer transition-colors ${
+        className={`group flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 min-h-[60px] border-b border-zinc-200/80 dark:border-zinc-800/80 cursor-pointer transition-colors ${
           isSelected
             ? 'bg-indigo-50/70 dark:bg-indigo-950/30'
             : 'bg-white dark:bg-zinc-950 hover:bg-zinc-50 dark:hover:bg-zinc-900/70'
         } ${reminder.completed ? 'opacity-60' : ''}`}
       >
         {/* Left: Checkbox + Title + Unboxed Metadata */}
-        <div className="flex items-start gap-3 min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onToggleComplete(reminder.id);
             }}
-            className={`mt-0.5 shrink-0 transition-colors ${
+            className={`min-h-[44px] min-w-[40px] -ml-1.5 flex items-center justify-center shrink-0 transition-colors ${
               reminder.completed
                 ? 'text-emerald-600 dark:text-emerald-400'
                 : 'text-zinc-300 dark:text-zinc-600 hover:text-indigo-600 dark:hover:text-indigo-400'
@@ -79,13 +79,13 @@ export const ReminderCard: React.FC<ReminderCardProps> = ({
             aria-label={reminder.completed ? 'Mark as active' : 'Mark as complete'}
           >
             {reminder.completed ? (
-              <CheckCircle2 className="w-4 h-4" />
+              <CheckCircle2 className="w-5 h-5 sm:w-4 sm:h-4" />
             ) : (
-              <Circle className="w-4 h-4" />
+              <Circle className="w-5 h-5 sm:w-4 sm:h-4" />
             )}
           </button>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 py-0.5">
             <div className="flex items-center gap-2">
               <h3
                 className={`text-sm font-medium truncate ${
@@ -138,32 +138,32 @@ export const ReminderCard: React.FC<ReminderCardProps> = ({
           </div>
         </div>
 
-        {/* Right: Hover Micro-Actions + Star */}
+        {/* Right: Touch-friendly Star & Delete */}
         <div
-          className="flex items-center gap-1 shrink-0"
+          className="flex items-center shrink-0"
           onClick={(e) => e.stopPropagation()}
         >
           <button
             type="button"
             onClick={() => onToggleStar(reminder.id)}
-            className={`p-1.5 rounded-md transition-colors ${
+            className={`min-h-[44px] min-w-[40px] flex items-center justify-center rounded-lg transition-colors ${
               reminder.starred
                 ? 'text-amber-500'
-                : 'text-zinc-300 dark:text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-600 dark:hover:text-zinc-300'
+                : 'text-zinc-300 dark:text-zinc-600 lg:opacity-0 lg:group-hover:opacity-100 hover:text-zinc-600 dark:hover:text-zinc-300'
             }`}
             aria-label={reminder.starred ? 'Unstar reminder' : 'Star reminder'}
           >
-            <Star className={`w-3.5 h-3.5 ${reminder.starred ? 'fill-amber-500' : ''}`} />
+            <Star className={`w-4 h-4 ${reminder.starred ? 'fill-amber-500' : ''}`} />
           </button>
 
           {onDelete && (
             <button
               type="button"
               onClick={() => onDelete(reminder.id)}
-              className="p-1.5 rounded-md text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-rose-600 dark:hover:text-rose-400 transition-opacity"
+              className="hidden sm:flex min-h-[44px] min-w-[40px] items-center justify-center rounded-lg text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-rose-600 dark:hover:text-rose-400 transition-opacity"
               aria-label="Delete reminder"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           )}
         </div>

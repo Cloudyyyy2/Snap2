@@ -1,5 +1,6 @@
 export type Category = 'Bills' | 'Events' | 'Tasks' | 'Travel' | 'Work' | 'Personal' | 'Health';
 export type Priority = 'high' | 'medium' | 'low';
+export type OcrProfile = 'auto' | 'printed' | 'handwriting';
 
 export interface ChecklistItem {
   id: string;
@@ -17,6 +18,8 @@ export interface Reminder {
   checklist: ChecklistItem[];
   tags: string[];
   image?: string; // base64 data url or image url
+  ocrText?: string;
+  ocrEngine?: string;
   completed: boolean;
   starred: boolean;
   createdAt: string;

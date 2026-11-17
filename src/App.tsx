@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
+import { BottomNav, MobileTab } from './components/BottomNav';
+import { OcrStudio } from './components/OcrStudio';
 import { ReminderCard } from './components/ReminderCard';
 import { ReminderInspector } from './components/ReminderInspector';
-import { UploadModal } from './components/UploadModal';
 import { AddReminderModal } from './components/AddReminderModal';
 import { AuthModal } from './components/AuthModal';
 import { CommandPalette } from './components/CommandPalette';
@@ -31,6 +32,7 @@ import {
   Columns3,
   ArrowUpDown,
   Loader2,
+  Search,
   X,
 } from 'lucide-react';
 
@@ -38,15 +40,15 @@ type ViewMode = 'list' | 'grid' | 'board';
 
 export default function App() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [currentFilter, setCurrentFilter] = useState<string>('all');
+  const [currentFilter, setCurrentFilter] = useState<string>('scan');
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'title'>('dueDate');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   const [activeReminder, setActiveReminder] = useState<Reminder | null>(null);
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [droppedImage, setDroppedImage] = useState<string | null>(null);
+  const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
@@ -69,7 +71,12 @@ export default function App() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'success' | 'error';
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -85,12 +92,24 @@ export default function App() {
     }
   }, [isDark]);
 
-  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => {
-      setToast((prev) => (prev?.message === message ? null : prev));
-    }, 4500);
-  }, []);
+  const showToast = useCallback(
+    (
+      message: string,
+      type: 'success' | 'error' = 'success',
+      action?: { label: string; onClick: () => void }
+    ) => {
+      setToast({
+        message,
+        type,
+        actionLabel: action?.label,
+        onAction: action?.onClick,
+      });
+      setTimeout(() => {
+        setToast((prev) => (prev?.message === message ? null : prev));
+      }, 4500);
+    },
+    []
+  );
 
   const loadReminders = useCallback(
     async (uid: string | null) => {
@@ -166,28 +185,27 @@ export default function App() {
 
       if (e.key === 'Escape') {
         if (isCommandOpen) setIsCommandOpen(false);
-        else if (isUploadOpen) setIsUploadOpen(false);
         else if (isAddOpen) setIsAddOpen(false);
         else if (isAuthOpen) setIsAuthOpen(false);
         else if (activeReminder) setActiveReminder(null);
         return;
       }
 
-      if (isTyping || isCommandOpen || isUploadOpen || isAddOpen || isAuthOpen) return;
+      if (isTyping || isCommandOpen || isAddOpen || isAuthOpen) return;
 
       if (e.key.toLowerCase() === 'n') {
         e.preventDefault();
         setIsAddOpen(true);
       } else if (e.key.toLowerCase() === 's') {
         e.preventDefault();
-        setDroppedImage(null);
-        setIsUploadOpen(true);
+        setCurrentFilter('scan');
+        setActiveReminder(null);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isCommandOpen, isUploadOpen, isAddOpen, isAuthOpen, activeReminder]);
+  }, [isCommandOpen, isAddOpen, isAuthOpen, activeReminder]);
 
   const updateLocalState = (updatedList: Reminder[]) => {
     setReminders(updatedList);
@@ -267,8 +285,16 @@ export default function App() {
       try {
         const saved = await createSupabaseReminder(userId, newReminder);
         setReminders((prev) => [saved, ...prev]);
-        setActiveReminder(saved);
-        showToast('Reminder saved to cloud.');
+        if (currentFilter !== 'scan') {
+          setActiveReminder(saved);
+        }
+        showToast('Reminder saved.', 'success', {
+          label: 'View',
+          onClick: () => {
+            setCurrentFilter('all');
+            setActiveReminder(saved);
+          },
+        });
         return;
       } catch (err: any) {
         showToast(err?.message || 'Failed to save to cloud; saved locally instead.', 'error');
@@ -277,7 +303,16 @@ export default function App() {
 
     const updatedList = [newReminder, ...reminders];
     updateLocalState(updatedList);
-    setActiveReminder(newReminder);
+    if (currentFilter !== 'scan') {
+      setActiveReminder(newReminder);
+    }
+    showToast('Reminder saved.', 'success', {
+      label: 'View',
+      onClick: () => {
+        setCurrentFilter('all');
+        setActiveReminder(newReminder);
+      },
+    });
   };
 
   const handleQuickCapture = async (useAI: boolean) => {
@@ -357,8 +392,9 @@ export default function App() {
     reader.onload = (ev) => {
       const result = ev.target?.result as string;
       if (result) {
+        setCurrentFilter('scan');
+        setActiveReminder(null);
         setDroppedImage(result);
-        setIsUploadOpen(true);
       }
     };
     reader.readAsDataURL(file);
@@ -419,29 +455,31 @@ export default function App() {
   };
 
   // Filter & Search logic
+  const todayStr = new Date().toISOString().split('T')[0];
+  const nowIso = new Date().toISOString();
+
   const filteredReminders = reminders.filter((r) => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchTitle = r.title.toLowerCase().includes(q);
       const matchDesc = r.description.toLowerCase().includes(q);
+      const matchOcr = (r.ocrText || '').toLowerCase().includes(q);
       const matchTags = r.tags.some((t) => t.toLowerCase().includes(q));
-      if (!matchTitle && !matchDesc && !matchTags) return false;
+      if (!matchTitle && !matchDesc && !matchOcr && !matchTags) return false;
     }
 
-    if (selectedCategory !== 'All' && r.category !== selectedCategory) {
+    if (selectedCategory !== 'All' && currentFilter !== 'search' && r.category !== selectedCategory) {
       return false;
     }
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
 
     if (currentFilter === 'all') return !r.completed;
     if (currentFilter === 'today') return !r.completed && r.dueDate.startsWith(todayStr);
     if (currentFilter === 'upcoming') return !r.completed && r.dueDate > nowIso;
     if (currentFilter === 'starred') return r.starred && !r.completed;
     if (currentFilter === 'completed') return r.completed;
+    if (currentFilter === 'search') return true;
 
-    return true;
+    return !r.completed;
   });
 
   const sortedReminders = [...filteredReminders].sort((a, b) => {
@@ -456,6 +494,7 @@ export default function App() {
   });
 
   const activeCount = reminders.filter((r) => !r.completed).length;
+  const todayCount = reminders.filter((r) => !r.completed && r.dueDate.startsWith(todayStr)).length;
 
   // Board columns
   const urgentOrOverdue = sortedReminders.filter(
@@ -465,6 +504,26 @@ export default function App() {
     (r) => !r.completed && r.priority !== 'high' && new Date(r.dueDate).getTime() >= Date.now()
   );
   const doneList = reminders.filter((r) => r.completed);
+
+  const activeMobileTab: MobileTab =
+    currentFilter === 'scan'
+      ? 'scan'
+      : currentFilter === 'today'
+        ? 'today'
+        : currentFilter === 'search'
+          ? 'search'
+          : 'inbox';
+
+  const handleMobileTabSelect = (tab: MobileTab) => {
+    setActiveReminder(null);
+    if (tab === 'scan') setCurrentFilter('scan');
+    else if (tab === 'inbox') setCurrentFilter('all');
+    else if (tab === 'today') setCurrentFilter('today');
+    else if (tab === 'search') setCurrentFilter('search');
+  };
+
+  const hideMobileBottomNav =
+    reviewSheetOpen || Boolean(activeReminder) || isAddOpen || isAuthOpen || mobileNavOpen;
 
   return (
     <div
@@ -476,16 +535,24 @@ export default function App() {
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDropOnWorkspace}
     >
-      {/* Left Navigation Rail */}
+      {/* Left Navigation Rail (Desktop fixed / Mobile drawer for Categories, Push & Cloud Sync) */}
       <Sidebar
         currentFilter={currentFilter}
-        setCurrentFilter={setCurrentFilter}
+        setCurrentFilter={(f) => {
+          setCurrentFilter(f);
+          if (f === 'scan') setActiveReminder(null);
+        }}
         selectedCategory={selectedCategory}
-        setSelectedCategory={setSelectedCategory}
+        setSelectedCategory={(cat) => {
+          setSelectedCategory(cat);
+          if (currentFilter === 'scan' || currentFilter === 'search') {
+            setCurrentFilter('all');
+          }
+        }}
         reminders={reminders}
         onOpenUpload={() => {
-          setDroppedImage(null);
-          setIsUploadOpen(true);
+          setCurrentFilter('scan');
+          setActiveReminder(null);
         }}
         onOpenAdd={() => setIsAddOpen(true)}
         userEmail={userEmail}
@@ -508,243 +575,278 @@ export default function App() {
           selectedCategory={selectedCategory}
           activeCount={activeCount}
           searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
+          setSearchQuery={(q) => {
+            setSearchQuery(q);
+            if (q && currentFilter === 'scan') {
+              setCurrentFilter('search');
+            }
+          }}
           onOpenCommandPalette={() => setIsCommandOpen(true)}
-          onOpenUpload={() => {
-            setDroppedImage(null);
-            setIsUploadOpen(true);
+          onOpenScan={() => {
+            setCurrentFilter('scan');
+            setActiveReminder(null);
           }}
           onOpenMobileMenu={() => setMobileNavOpen(true)}
         />
 
-        <main className="flex-1 px-4 lg:px-8 py-6 max-w-5xl w-full mx-auto space-y-5">
-          {/* Frictionless Quick-Capture Bar (Todoist / Linear style) */}
-          <div
-            className={`rounded-xl border transition-colors ${
-              isDragOver
-                ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20'
-                : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50'
-            } p-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2`}
-          >
-            <input
-              type="text"
-              value={quickInput}
-              onChange={(e) => setQuickInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleQuickCapture(false);
-                }
-              }}
-              placeholder="Quick add a reminder (e.g. Pay electric bill $114 Friday) or drop a screenshot anywhere..."
-              className="flex-1 h-9 px-3 bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none"
+        {currentFilter === 'scan' ? (
+          <main className="flex-1">
+            <OcrStudio
+              onSaveReminder={handleAddReminder}
+              externalImage={droppedImage}
+              onClearExternalImage={() => setDroppedImage(null)}
+              onSheetOpenChange={setReviewSheetOpen}
             />
-            <div className="flex items-center gap-1.5 shrink-0 justify-end">
-              {quickInput.trim() && (
-                <>
+          </main>
+        ) : (
+          <main className="flex-1 px-4 lg:px-8 pt-4 pb-24 lg:py-6 max-w-5xl w-full mx-auto space-y-4">
+            {/* Mobile-First Search Bar when in Search Tab */}
+            {currentFilter === 'search' && (
+              <div className="relative">
+                <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search titles, notes, OCR text, or tags..."
+                  className="w-full min-h-[44px] pl-10 pr-16 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-base sm:text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-indigo-500"
+                />
+                {searchQuery && (
                   <button
                     type="button"
-                    disabled={quickParsing}
-                    onClick={() => handleQuickCapture(true)}
-                    className="px-3 h-8 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 min-h-[36px] px-2.5 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
                   >
-                    {quickParsing ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Parsing...</span>
-                      </>
-                    ) : (
-                      <span>AI Parse</span>
-                    )}
+                    Clear
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickCapture(false)}
-                    className="px-3 h-8 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-medium rounded-lg hover:opacity-90 transition-opacity whitespace-nowrap"
-                  >
-                    Add
-                  </button>
-                </>
-              )}
-              {!quickInput.trim() && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDroppedImage(null);
-                    setIsUploadOpen(true);
+                )}
+              </div>
+            )}
+
+            {/* Quick-Capture Bar (hidden in Search tab to keep search focused) */}
+            {currentFilter !== 'search' && (
+              <div
+                className={`rounded-2xl border transition-colors ${
+                  isDragOver
+                    ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20'
+                    : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50'
+                } p-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2`}
+              >
+                <input
+                  type="text"
+                  value={quickInput}
+                  onChange={(e) => setQuickInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleQuickCapture(false);
+                    }
                   }}
-                  className="px-3 h-8 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/60 dark:hover:bg-zinc-800 rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>Drop screenshot</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Workspace Toolbar: Count + View Switcher + Sort */}
-          <div className="flex items-center justify-between gap-4 pb-1">
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 font-mono-nums">
-              {sortedReminders.length} {sortedReminders.length === 1 ? 'reminder' : 'reminders'}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Segmented View Switcher */}
-              <div className="flex items-center gap-0.5 p-0.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-lg">
-                {(
-                  [
-                    { id: 'list', label: 'List', icon: <List className="w-3.5 h-3.5" /> },
-                    { id: 'grid', label: 'Grid', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
-                    { id: 'board', label: 'Board', icon: <Columns3 className="w-3.5 h-3.5" /> },
-                  ] as const
-                ).map((mode) => {
-                  const active = viewMode === mode.id;
-                  return (
+                  placeholder="Quick add a reminder or drop a note image anywhere..."
+                  className="flex-1 min-h-[40px] px-3 bg-transparent text-base sm:text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none"
+                />
+                <div className="flex items-center gap-1.5 shrink-0 justify-end">
+                  {quickInput.trim() ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={quickParsing}
+                        onClick={() => handleQuickCapture(true)}
+                        className="min-h-[40px] px-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium rounded-xl transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                      >
+                        {quickParsing ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Parsing...</span>
+                          </>
+                        ) : (
+                          <span>AI Parse</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickCapture(false)}
+                        className="min-h-[40px] px-3.5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-medium rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap"
+                      >
+                        Add
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      key={mode.id}
                       type="button"
-                      onClick={() => setViewMode(mode.id)}
-                      className={`px-2.5 py-1 rounded-md text-xs font-medium inline-flex items-center gap-1.5 transition-colors whitespace-nowrap ${
-                        active
-                          ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                          : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
-                      }`}
+                      onClick={() => setCurrentFilter('scan')}
+                      className="min-h-[40px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/60 dark:hover:bg-zinc-800 rounded-xl transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
                     >
-                      {mode.icon}
-                      <span className="hidden sm:inline">{mode.label}</span>
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Open OCR Studio</span>
                     </button>
-                  );
-                })}
-              </div>
-
-              {/* Sort Select */}
-              <div className="flex items-center gap-1.5 h-8 px-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-xs text-zinc-600 dark:text-zinc-300">
-                <ArrowUpDown className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as 'dueDate' | 'priority' | 'title')}
-                  className="bg-transparent font-medium focus:outline-none cursor-pointer text-xs"
-                  aria-label="Sort reminders"
-                >
-                  <option value="dueDate" className="bg-white dark:bg-zinc-900">Due Date</option>
-                  <option value="priority" className="bg-white dark:bg-zinc-900">Priority</option>
-                  <option value="title" className="bg-white dark:bg-zinc-900">Title</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Reminders Content */}
-          {sortedReminders.length === 0 && viewMode !== 'board' ? (
-            <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl p-12 text-center space-y-4">
-              <div className="w-11 h-11 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 flex items-center justify-center mx-auto">
-                <Camera className="w-5 h-5" />
-              </div>
-              <div className="max-w-sm mx-auto space-y-1">
-                <h3 className="font-display text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  No reminders here
-                </h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  {searchQuery
-                    ? `No matches for "${searchQuery}".`
-                    : 'Scan a screenshot of a bill, receipt, or schedule to turn it into an actionable reminder.'}
-                </p>
-              </div>
-              <div className="flex items-center justify-center gap-2 pt-1">
-                <button
-                  onClick={() => {
-                    setDroppedImage(null);
-                    setIsUploadOpen(true);
-                  }}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg inline-flex items-center gap-1.5 transition-colors"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>Scan Screenshot</span>
-                </button>
-                <button
-                  onClick={() => setIsAddOpen(true)}
-                  className="px-3.5 py-2 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 text-xs font-medium rounded-lg inline-flex items-center gap-1.5 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>New Reminder</span>
-                </button>
-              </div>
-            </div>
-          ) : viewMode === 'list' ? (
-            <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden divide-y-0">
-              {sortedReminders.map((reminder) => (
-                <ReminderCard
-                  key={reminder.id}
-                  reminder={reminder}
-                  variant="row"
-                  isSelected={activeReminder?.id === reminder.id}
-                  onToggleComplete={handleToggleComplete}
-                  onToggleStar={handleToggleStar}
-                  onDelete={handleDeleteReminder}
-                  onClick={() => setActiveReminder(reminder)}
-                />
-              ))}
-            </div>
-          ) : viewMode === 'grid' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {sortedReminders.map((reminder) => (
-                <ReminderCard
-                  key={reminder.id}
-                  reminder={reminder}
-                  variant="card"
-                  isSelected={activeReminder?.id === reminder.id}
-                  onToggleComplete={handleToggleComplete}
-                  onToggleStar={handleToggleStar}
-                  onClick={() => setActiveReminder(reminder)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-              {[
-                { title: 'Urgent & Overdue', items: urgentOrOverdue },
-                { title: 'Scheduled', items: scheduled },
-                { title: 'Completed', items: doneList },
-              ].map((col) => (
-                <div
-                  key={col.title}
-                  className="bg-zinc-50/70 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-xl p-3 space-y-2.5"
-                >
-                  <div className="flex items-center justify-between px-1">
-                    <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      {col.title}
-                    </h3>
-                    <span className="font-mono-nums text-[11px] text-zinc-400">
-                      {col.items.length}
-                    </span>
-                  </div>
-                  <div className="space-y-2.5">
-                    {col.items.length > 0 ? (
-                      col.items.map((reminder) => (
-                        <ReminderCard
-                          key={reminder.id}
-                          reminder={reminder}
-                          variant="card"
-                          isSelected={activeReminder?.id === reminder.id}
-                          onToggleComplete={handleToggleComplete}
-                          onToggleStar={handleToggleStar}
-                          onClick={() => setActiveReminder(reminder)}
-                        />
-                      ))
-                    ) : (
-                      <div className="py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
-                        Empty
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* Workspace Toolbar: Count + View Switcher + Sort */}
+            <div className="flex items-center justify-between gap-4 pb-1">
+              <div className="text-xs text-zinc-500 dark:text-zinc-400 font-mono-nums">
+                {sortedReminders.length} {sortedReminders.length === 1 ? 'reminder' : 'reminders'}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Segmented View Switcher */}
+                <div className="flex items-center gap-0.5 p-0.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-xl">
+                  {(
+                    [
+                      { id: 'list', label: 'List', icon: <List className="w-3.5 h-3.5" /> },
+                      { id: 'grid', label: 'Grid', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
+                      { id: 'board', label: 'Board', icon: <Columns3 className="w-3.5 h-3.5" /> },
+                    ] as const
+                  ).map((mode) => {
+                    const active = viewMode === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setViewMode(mode.id)}
+                        className={`min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                          active
+                            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                            : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+                        }`}
+                      >
+                        {mode.icon}
+                        <span className="hidden sm:inline">{mode.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Sort Select */}
+                <div className="flex items-center gap-1.5 min-h-[38px] px-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-xs text-zinc-600 dark:text-zinc-300">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'dueDate' | 'priority' | 'title')}
+                    className="bg-transparent font-medium focus:outline-none cursor-pointer text-xs"
+                    aria-label="Sort reminders"
+                  >
+                    <option value="dueDate" className="bg-white dark:bg-zinc-900">Due Date</option>
+                    <option value="priority" className="bg-white dark:bg-zinc-900">Priority</option>
+                    <option value="title" className="bg-white dark:bg-zinc-900">Title</option>
+                  </select>
+                </div>
+              </div>
             </div>
-          )}
-        </main>
+
+            {/* Reminders Content */}
+            {sortedReminders.length === 0 && viewMode !== 'board' ? (
+              <div className="border border-zinc-200 dark:border-zinc-800 rounded-2xl p-10 text-center space-y-4">
+                <div className="w-11 h-11 rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 flex items-center justify-center mx-auto">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div className="max-w-sm mx-auto space-y-1">
+                  <h3 className="font-display text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    No reminders here
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {searchQuery
+                      ? `No matches for "${searchQuery}".`
+                      : 'Scan a handwritten note, bill, or screenshot in OCR Studio to create your next reminder.'}
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  <button
+                    onClick={() => setCurrentFilter('scan')}
+                    className="min-h-[44px] px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-xl inline-flex items-center gap-1.5 transition-colors"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Open OCR Studio</span>
+                  </button>
+                  <button
+                    onClick={() => setIsAddOpen(true)}
+                    className="min-h-[44px] px-4 py-2 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 text-xs font-medium rounded-xl inline-flex items-center gap-1.5 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>New Reminder</span>
+                  </button>
+                </div>
+              </div>
+            ) : viewMode === 'list' ? (
+              <div className="border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden divide-y-0">
+                {sortedReminders.map((reminder) => (
+                  <ReminderCard
+                    key={reminder.id}
+                    reminder={reminder}
+                    variant="row"
+                    isSelected={activeReminder?.id === reminder.id}
+                    onToggleComplete={handleToggleComplete}
+                    onToggleStar={handleToggleStar}
+                    onDelete={handleDeleteReminder}
+                    onClick={() => setActiveReminder(reminder)}
+                  />
+                ))}
+              </div>
+            ) : viewMode === 'grid' ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {sortedReminders.map((reminder) => (
+                  <ReminderCard
+                    key={reminder.id}
+                    reminder={reminder}
+                    variant="card"
+                    isSelected={activeReminder?.id === reminder.id}
+                    onToggleComplete={handleToggleComplete}
+                    onToggleStar={handleToggleStar}
+                    onClick={() => setActiveReminder(reminder)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                {[
+                  { title: 'Urgent & Overdue', items: urgentOrOverdue },
+                  { title: 'Scheduled', items: scheduled },
+                  { title: 'Completed', items: doneList },
+                ].map((col) => (
+                  <div
+                    key={col.title}
+                    className="bg-zinc-50/70 dark:bg-zinc-900/30 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl p-3 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                        {col.title}
+                      </h3>
+                      <span className="font-mono-nums text-[11px] text-zinc-400">
+                        {col.items.length}
+                      </span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {col.items.length > 0 ? (
+                        col.items.map((reminder) => (
+                          <ReminderCard
+                            key={reminder.id}
+                            reminder={reminder}
+                            variant="card"
+                            isSelected={activeReminder?.id === reminder.id}
+                            onToggleComplete={handleToggleComplete}
+                            onToggleStar={handleToggleStar}
+                            onClick={() => setActiveReminder(reminder)}
+                          />
+                        ))
+                      ) : (
+                        <div className="py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
+                          Empty
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
+        )}
       </div>
 
-      {/* Right Split-Pane Master-Detail Inspector */}
+      {/* Right Split-Pane (Desktop) / Bottom Sheet (Mobile) Inspector */}
       {activeReminder && (
         <ReminderInspector
           reminder={activeReminder}
@@ -756,15 +858,13 @@ export default function App() {
         />
       )}
 
-      {/* Modals */}
-      {isUploadOpen && (
-        <UploadModal
-          initialImage={droppedImage}
-          onClose={() => {
-            setIsUploadOpen(false);
-            setDroppedImage(null);
-          }}
-          onReminderExtracted={handleAddReminder}
+      {/* Mobile Fixed 4-Tab Bottom Navigation Bar */}
+      {!hideMobileBottomNav && (
+        <BottomNav
+          activeTab={activeMobileTab}
+          onSelectTab={handleMobileTabSelect}
+          inboxCount={activeCount}
+          todayCount={todayCount}
         />
       )}
 
@@ -788,11 +888,14 @@ export default function App() {
         isOpen={isCommandOpen}
         onClose={() => setIsCommandOpen(false)}
         reminders={reminders}
-        onSelectReminder={(r) => setActiveReminder(r)}
+        onSelectReminder={(r) => {
+          setCurrentFilter('all');
+          setActiveReminder(r);
+        }}
         onSelectView={(v) => setCurrentFilter(v)}
         onOpenScan={() => {
-          setDroppedImage(null);
-          setIsUploadOpen(true);
+          setCurrentFilter('scan');
+          setActiveReminder(null);
         }}
         onOpenAdd={() => setIsAddOpen(true)}
         isDark={isDark}
@@ -801,18 +904,32 @@ export default function App() {
 
       {/* Subtle Toast Banner */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm">
+        <div className="fixed bottom-20 lg:bottom-5 right-4 left-4 sm:left-auto sm:right-5 z-50 sm:max-w-sm">
           <div
-            className={`px-4 py-2.5 rounded-lg border shadow-lg text-xs font-medium flex items-center justify-between gap-3 ${
+            className={`px-4 py-3 rounded-xl border shadow-lg text-xs font-medium flex items-center justify-between gap-3 ${
               toast.type === 'error'
                 ? 'bg-rose-50 dark:bg-rose-950 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
                 : 'bg-zinc-900 dark:bg-zinc-100 border-zinc-800 dark:border-zinc-200 text-white dark:text-zinc-900'
             }`}
           >
-            <span>{toast.message}</span>
-            <button onClick={() => setToast(null)} className="opacity-70 hover:opacity-100">
-              <X className="w-3.5 h-3.5" />
-            </button>
+            <span className="truncate">{toast.message}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              {toast.actionLabel && toast.onAction && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    toast.onAction?.();
+                    setToast(null);
+                  }}
+                  className="font-semibold underline underline-offset-2 text-indigo-300 dark:text-indigo-600"
+                >
+                  {toast.actionLabel}
+                </button>
+              )}
+              <button onClick={() => setToast(null)} className="opacity-70 hover:opacity-100 p-1">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       )}

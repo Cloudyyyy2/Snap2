@@ -21,6 +21,10 @@ dotenv.config({ path: '.env.production' });
 
 const app = express();
 app.use(express.json({ limit: '15mb' }));
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=*');
+  next();
+});
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
