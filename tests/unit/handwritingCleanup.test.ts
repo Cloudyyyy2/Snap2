@@ -172,12 +172,177 @@ describe('handwriting image cleanup & segmentation', () => {
       { text: 'call  Dr. Lee   at 3 pm  on 5 / 12 !', confidence: 0.85 },
       { text: 'buy milkk tomorow', confidence: 0.45 },
       { text: 'Bramwell invoice', confidence: 0.45 },
+      { text: 'of the Government of the Government of the Government', confidence: 0.78 },
+      { text: '0 000 000 000 000 000', confidence: 0.78 },
+      { text: 'a b c d e f', confidence: 0.78 },
     ]);
 
+    expect(lines.length).toBe(3);
     expect(lines[0].text).toBe('call Dr. Lee at 3pm on 5/12!');
     // High-frequency lexicon words at low confidence snap cleanly
     expect(lines[1].text).toBe('buy milk tomorrow');
     // Capitalized proper noun stays intact
     expect(lines[2].text).toContain('Bramwell');
+  });
+
+  it('autoInvertIfDarkMode flips dark-mode screenshots while leaving light paper unchanged', async () => {
+    const { autoInvertIfDarkMode, filterTextComponents } = await import(
+      '../../src/lib/ocr/handwriting/cleanup'
+    );
+    const { splitWideLineBox } = await import('../../src/lib/ocr/handwriting/lines');
+
+    const w = 160;
+    const h = 80;
+    const darkShot = new Uint8ClampedArray(w * h).fill(22);
+    for (let y = 30; y <= 45; y++) {
+      for (let x = 30; x <= 120; x++) {
+        darkShot[y * w + x] = 235;
+      }
+    }
+    const resDark = autoInvertIfDarkMode(darkShot, w, h);
+    expect(resDark.inverted).toBe(true);
+    expect(resDark.data[5 * w + 5]).toBeGreaterThan(220);
+    expect(resDark.data[38 * w + 60]).toBeLessThan(30);
+
+    const lightPaper = new Uint8ClampedArray(w * h).fill(245);
+    lightPaper[38 * w + 60] = 20;
+    const resLight = autoInvertIfDarkMode(lightPaper, w, h);
+    expect(resLight.inverted).toBe(false);
+
+    // filterTextComponents removes giant border clutter while keeping centered ink
+    const bin = new Uint8ClampedArray(300 * 220).fill(255);
+    for (let y = 0; y < 180; y++) {
+      for (let x = 0; x < 40; x++) {
+        bin[y * 300 + x] = 0;
+      }
+    }
+    for (let y = 100; y <= 116; y++) {
+      for (let x = 120; x <= 145; x++) {
+        bin[y * 300 + x] = 0;
+      }
+    }
+    const filtered = filterTextComponents(bin, 300, 220);
+    expect(filtered[40 * 300 + 15]).toBe(255);
+    expect(filtered[108 * 300 + 132]).toBe(0);
+
+    // splitWideLineBox splits overly wide lines (> 5:1) at whitespace gaps
+    const wideW = 500;
+    const wideH = 60;
+    const wideBin = new Uint8ClampedArray(wideW * wideH).fill(255);
+    for (let y = 20; y <= 45; y++) {
+      for (let x = 20; x <= 180; x++) wideBin[y * wideW + x] = 0;
+      for (let x = 230; x <= 460; x++) wideBin[y * wideW + x] = 0;
+    }
+    const chunks = splitWideLineBox(wideBin, wideW, wideH, {
+      x0: 20,
+      y0: 20,
+      x1: 460,
+      y1: 45,
+    });
+    expect(chunks.length).toBeGreaterThan(1);
+  });
+
+  it('runs Stage 1-4 enhancements: Otsu, median 3x3, bilateral smoothing, morphology, border crop, quad warp, DPI scale, and XY-cut layout regions', async () => {
+    const {
+      binarizeOtsu,
+      applyMedianFilter3x3,
+      applyBilateralSmoothing,
+      applyMorphologicalOp,
+      cropDarkBordersAndMargins,
+      warpPerspectiveQuad,
+      computeRecommendedDpiScale,
+    } = await import('../../src/lib/ocr/handwriting/cleanup');
+    const { segmentLayoutRegions } = await import('../../src/lib/ocr/handwriting/layout');
+
+    // 1. Otsu binarization separates bimodal grayscale cleanly
+    const bimodal = new Uint8ClampedArray(60 * 40).fill(235);
+    for (let y = 10; y < 30; y++) {
+      for (let x = 15; x < 45; x++) bimodal[y * 60 + x] = 35;
+    }
+    const otsu = binarizeOtsu(bimodal, 60, 40);
+    expect(otsu[20 * 60 + 30]).toBe(0);
+    expect(otsu[2 * 60 + 2]).toBe(255);
+
+    // 2. Median 3x3 removes isolated salt-and-pepper specks while keeping solid edges sharp
+    const noisy = new Uint8ClampedArray(50 * 50).fill(245);
+    for (let y = 20; y < 30; y++) {
+      for (let x = 20; x < 30; x++) noisy[y * 50 + x] = 20;
+    }
+    noisy[5 * 50 + 5] = 0; // isolated black speck
+    noisy[25 * 50 + 25] = 255; // isolated white pinhole inside ink
+    const denoised = applyMedianFilter3x3(noisy, 50, 50);
+    expect(denoised[5 * 50 + 5]).toBe(245);
+    expect(denoised[25 * 50 + 25]).toBe(20);
+
+    // 3. Bilateral smoothing reduces subtle background ripple without washing out strong ink step
+    const rippled = new Uint8ClampedArray(40 * 40);
+    for (let y = 0; y < 40; y++) {
+      for (let x = 0; x < 40; x++) {
+        rippled[y * 40 + x] = x >= 20 ? 30 : 230 + ((x + y) % 2 === 0 ? 10 : -10);
+      }
+    }
+    const smoothed = applyBilateralSmoothing(rippled, 40, 40, 2.0, 25.0);
+    expect(smoothed[20 * 40 + 10]).toBeGreaterThan(215);
+    expect(smoothed[20 * 40 + 30]).toBeLessThan(45);
+
+    // 4. Morphological closing bridges a 1px horizontal gap in broken ink; opening removes 1px spur
+    const broken = new Uint8ClampedArray(30 * 20).fill(255);
+    for (let x = 5; x <= 10; x++) broken[10 * 30 + x] = 0;
+    for (let x = 12; x <= 18; x++) broken[10 * 30 + x] = 0;
+    broken[2 * 30 + 2] = 0; // isolated 1px dot
+    const closed = applyMorphologicalOp(broken, 30, 20, 'close', 1);
+    expect(closed[10 * 30 + 11]).toBe(0);
+    const opened = applyMorphologicalOp(broken, 30, 20, 'open', 1);
+    expect(opened[2 * 30 + 2]).toBe(255);
+
+    // 5. cropDarkBordersAndMargins trims dark desk margins around bright central paper
+    const cw = 200;
+    const ch = 120;
+    const bordered = new Uint8ClampedArray(cw * ch).fill(45);
+    for (let y = 15; y < 105; y++) {
+      for (let x = 40; x < 160; x++) bordered[y * cw + x] = 242;
+    }
+    const cropRes = cropDarkBordersAndMargins(bordered, cw, ch);
+    expect(cropRes.cropped).toBe(true);
+    expect(cropRes.width).toBeLessThan(cw * 0.75);
+    expect(cropRes.height).toBeLessThan(ch * 0.85);
+
+    // 6. warpPerspectiveQuad flattens a tilted trapezoid onto an upright rectangle
+    const qw = 160;
+    const qh = 120;
+    const quadSrc = new Uint8ClampedArray(qw * qh).fill(30);
+    for (let y = 10; y <= 110; y++) {
+      const t = (y - 10) / 100;
+      const lx = Math.round(30 - t * 20);
+      const rx = Math.round(130 + t * 20);
+      for (let x = lx; x <= rx; x++) quadSrc[y * qw + x] = 240;
+    }
+    const warped = warpPerspectiveQuad(quadSrc, qw, qh, [
+      { x: 30, y: 10 },
+      { x: 130, y: 10 },
+      { x: 150, y: 110 },
+      { x: 10, y: 110 },
+    ]);
+    expect(warped.width).toBeGreaterThanOrEqual(135);
+    expect(warped.data[Math.floor(warped.height / 2) * warped.width + Math.floor(warped.width / 2)]).toBeGreaterThan(220);
+
+    // 7. computeRecommendedDpiScale upsamples tiny text runs (>= 1.5x)
+    const tiny = new Uint8ClampedArray(300 * 100).fill(255);
+    for (let x = 20; x < 280; x += 4) {
+      for (let y = 40; y < 48; y++) tiny[y * 300 + x] = 0; // 8px tiny glyphs
+    }
+    expect(computeRecommendedDpiScale(tiny, 300, 100)).toBeGreaterThanOrEqual(2.0);
+
+    // 8. segmentLayoutRegions separates 2 distinct columns in left-to-right reading order
+    const rw = 320;
+    const rh = 160;
+    const twoCol = new Uint8ClampedArray(rw * rh).fill(255);
+    for (let y = 25; y <= 125; y++) {
+      for (let x = 20; x <= 110; x++) twoCol[y * rw + x] = 0;
+      for (let x = 200; x <= 295; x++) twoCol[y * rw + x] = 0;
+    }
+    const regions = segmentLayoutRegions(twoCol, rw, rh);
+    expect(regions.length).toBe(2);
+    expect(regions[0].x1).toBeLessThan(regions[1].x0);
   });
 });

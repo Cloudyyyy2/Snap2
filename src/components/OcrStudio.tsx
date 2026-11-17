@@ -36,6 +36,9 @@ interface ScanExtractionMeta {
   linesCount: number;
   detectedStyle: 'printed' | 'handwriting';
   engineLabel: string;
+  appliedSteps?: string[];
+  skewAngle?: number;
+  regionsCount?: number;
 }
 
 interface DraftReminderState {
@@ -95,9 +98,14 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
 }) => {
   const [ocrProfile, setOcrProfile] = useState<OcrProfile>(() => getStoredProfile());
   const [localModelReady, setLocalModelReady] = useState<boolean | null>(null);
+  const [printedModelReady, setPrintedModelReady] = useState<boolean | null>(null);
+  const [handwritingModelTier, setHandwritingModelTier] = useState<string | null>(null);
+  const [printedModelTier, setPrintedModelTier] = useState<string | null>(null);
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [sourceImage, setSourceImage] = useState<string | null>(null);
+  const [processedImage, setProcessedImage] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<'original' | 'processed'>('processed');
   const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -128,10 +136,20 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
       .then((data) => {
         if (active && data) {
           setLocalModelReady(data.handwritingModel === 'ready');
+          setPrintedModelReady(data.printedModel === 'ready');
+          setHandwritingModelTier(
+            data.handwritingModelId === 'trocr-base-handwritten' ? 'TrOCR Base' : 'TrOCR'
+          );
+          setPrintedModelTier(
+            data.printedModelId === 'tessdata_full' ? 'Tesseract Full' : 'Tesseract'
+          );
         }
       })
       .catch(() => {
-        if (active) setLocalModelReady(false);
+        if (active) {
+          setLocalModelReady(false);
+          setPrintedModelReady(false);
+        }
       });
     return () => {
       active = false;
@@ -226,6 +244,8 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
       options?: { forceHandwriting?: boolean; forceVision?: boolean }
     ) => {
       setSourceImage(image);
+      setProcessedImage(null);
+      setPreviewMode('processed');
       setIsCameraOpen(false);
       setReviewSheetOpen(true);
       setIsScanning(true);
@@ -234,16 +254,19 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
       setScanMeta(null);
 
       try {
-        const shouldTryLocal =
-          !options?.forceVision &&
-          localModelReady !== false &&
-          (options?.forceHandwriting || targetProfile === 'handwriting' || targetProfile === 'auto');
+        const effectiveProfile: OcrProfile = options?.forceHandwriting
+          ? 'handwriting'
+          : targetProfile;
+        const canRunLocal =
+          !options?.forceVision && (localModelReady !== false || printedModelReady !== false);
 
-        if (shouldTryLocal) {
+        if (canRunLocal) {
           setStatusStep(
-            options?.forceHandwriting || targetProfile === 'handwriting'
-              ? 'Reading handwriting locally...'
-              : 'Detecting note style locally...'
+            effectiveProfile === 'printed'
+              ? 'Normalizing contrast & reading printed text offline...'
+              : effectiveProfile === 'handwriting'
+                ? 'Normalizing paper & reading handwriting offline...'
+                : 'Normalizing geometry & reading text offline...'
           );
 
           const res = await fetch('/api/local-ocr', {
@@ -251,44 +274,58 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               image,
-              ocrProfile: options?.forceHandwriting ? 'handwriting' : targetProfile,
+              ocrProfile: effectiveProfile,
               exportStages: true,
             }),
           });
 
           const localData = await res.json();
           if (!res.ok || !localData.success) {
-            throw new Error(localData.error || `Local OCR failed (HTTP ${res.status})`);
+            throw new Error(localData.error || `Offline OCR failed (HTTP ${res.status})`);
           }
 
-          if (localData.recognizer === 'trocr-host') {
+          if (localData.processedPreview) {
+            setProcessedImage(localData.processedPreview);
+          }
+
+          if (localData.recognizer !== 'vision-fallback') {
             const linesCount = Array.isArray(localData.lines) ? localData.lines.length : 0;
-            const label = 'Handwriting · TrOCR (Local)';
+            const label =
+              localData.recognizer === 'tesseract-host'
+                ? `Printed · ${printedModelTier || 'Tesseract Full'} (Offline)`
+                : `Handwriting · ${handwritingModelTier || 'TrOCR Base'} (Offline)`;
+
             setEditableText(localData.text || '');
             setScanMeta({
               linesCount,
               detectedStyle: localData.detectedStyle || 'handwriting',
               engineLabel: label,
+              appliedSteps: Array.isArray(localData.appliedSteps)
+                ? localData.appliedSteps
+                : undefined,
+              skewAngle: localData.skewAngle,
+              regionsCount: localData.regionsCount,
             });
-            recordRecentScan(image, localData.text || 'Handwritten note', label);
-            if (!localData.text) {
+            recordRecentScan(image, localData.text || 'Scanned note', label);
+
+            if (!localData.text?.trim()) {
               setErrorMsg(
-                'No clear handwriting lines were recognized. Edit the note below or try Vision AI.'
+                'No clear text lines were found offline. Edit the text below, switch mode (Printed / Handwriting), or tap Try Vision AI.'
               );
             }
             return;
           }
         }
 
-        // Printed capture or Vision AI path: extract structured reminder directly
-        setStatusStep('Extracting text & reminder details...');
+        // Manual Vision AI fallback ONLY when explicitly requested or when no local model is ready
+        setStatusStep('Reading image with Vision AI fallback...');
         const res = await fetch('/api/extract-reminder', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             image,
             prompt: promptText.trim() || undefined,
-            ocrProfile: targetProfile,
+            ocrProfile: effectiveProfile,
           }),
         });
 
@@ -304,16 +341,17 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
         const engineLabel =
           data.provider === 'local-parser'
             ? 'Offline · Local Parser'
-            : `${targetProfile === 'handwriting' ? 'Handwriting' : 'Printed'} · Vision AI`;
+            : `${effectiveProfile === 'handwriting' ? 'Handwriting' : effectiveProfile === 'printed' ? 'Printed' : 'Auto'} · Vision AI`;
 
         const extractedTextPreview =
+          data.rawText ||
           data.ocrText ||
           [data.data?.title, data.data?.description].filter(Boolean).join('\n');
 
         setEditableText(extractedTextPreview);
         setScanMeta({
           linesCount: extractedTextPreview ? extractedTextPreview.split('\n').length : 1,
-          detectedStyle: targetProfile === 'handwriting' ? 'handwriting' : 'printed',
+          detectedStyle: effectiveProfile === 'handwriting' ? 'handwriting' : 'printed',
           engineLabel,
         });
         setDraft(buildDraftFromApi(data, extractedTextPreview, engineLabel));
@@ -331,7 +369,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
         setStatusStep('');
       }
     },
-    [buildDraftFromApi, localModelReady, promptText, recordRecentScan]
+    [buildDraftFromApi, localModelReady, printedModelReady, promptText, recordRecentScan]
   );
 
   // Pick up workspace drag-and-drop image passed from App
@@ -389,11 +427,11 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
     setErrorMsg(null);
 
     try {
+      // Final step only: pass verified extracted OCR text (never re-uploading image) to AI/local reminder structurer
       const res = await fetch('/api/extract-reminder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: sourceImage,
           ocrText: editableText.trim(),
           prompt: promptText.trim() || undefined,
           ocrProfile,
@@ -593,11 +631,11 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             </div>
 
             <span className="text-xs text-zinc-500 dark:text-zinc-400 px-1">
-              {localModelReady === true
-                ? 'Auto-detects handwriting locally via TrOCR'
+              {localModelReady === true || printedModelReady === true
+                ? `Offline ${handwritingModelTier || 'TrOCR'} + ${printedModelTier || 'Tesseract'} ready`
                 : localModelReady === false
-                  ? 'Vision AI & offline parser active'
-                  : 'Checking local OCR engine...'}
+                  ? 'Offline parser active'
+                  : 'Checking offline OCR engines...'}
             </span>
           </div>
 
@@ -686,7 +724,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             {/* Mobile Drag Handle */}
             <div className="w-10 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto mt-3 mb-1 md:hidden shrink-0" />
 
-            {/* Sheet Header with Zoomable Source Thumbnail */}
+            {/* Sheet Header with Zoomable Source / Processed Thumbnail */}
             <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
               <div className="flex items-center gap-3 min-w-0">
                 {sourceImage && (
@@ -697,7 +735,11 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                     aria-label="Zoom scanned image"
                   >
                     <img
-                      src={sourceImage}
+                      src={
+                        previewMode === 'processed' && processedImage
+                          ? processedImage
+                          : sourceImage
+                      }
                       alt="Scanned note thumbnail"
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
@@ -980,7 +1022,38 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                         <FileText className="w-3.5 h-3.5 text-zinc-400" />
                         <span>Editable extracted text</span>
                       </label>
+                      {processedImage && (
+                        <div className="inline-flex items-center gap-1 p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMode('processed')}
+                            className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                              previewMode === 'processed'
+                                ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                                : 'text-zinc-500 dark:text-zinc-400'
+                            }`}
+                          >
+                            Cleaned
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMode('original')}
+                            className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                              previewMode === 'original'
+                                ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                                : 'text-zinc-500 dark:text-zinc-400'
+                            }`}
+                          >
+                            Original
+                          </button>
+                        </div>
+                      )}
                     </div>
+                    {scanMeta?.appliedSteps && scanMeta.appliedSteps.length > 0 && (
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono-nums truncate">
+                        {scanMeta.appliedSteps.slice(0, 5).join(' · ')}
+                      </p>
+                    )}
                     <textarea
                       rows={5}
                       value={editableText}
@@ -1004,7 +1077,15 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                   </div>
 
                   {sourceImage && (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => runExtractionPipeline(sourceImage, 'printed')}
+                        className="min-h-[44px] px-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1 whitespace-nowrap"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Printed</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() =>
@@ -1012,10 +1093,10 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                             forceHandwriting: true,
                           })
                         }
-                        className="min-h-[44px] px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                        className="min-h-[44px] px-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1 whitespace-nowrap"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Re-read handwriting</span>
+                        <span>Handwriting</span>
                       </button>
                       <button
                         type="button"
@@ -1024,10 +1105,10 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                             forceVision: true,
                           })
                         }
-                        className="min-h-[44px] px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                        className="min-h-[44px] px-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1 whitespace-nowrap"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Use Vision AI</span>
+                        <span>Try Vision AI</span>
                       </button>
                     </div>
                   )}
@@ -1069,12 +1150,41 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
         </div>
       )}
 
-      {/* Fullscreen Source Image Zoom Lightbox */}
+      {/* Fullscreen Source / Processed Image Zoom Lightbox */}
       {lightboxOpen && sourceImage && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-3 p-4 bg-black/90 backdrop-blur-sm"
           onClick={() => setLightboxOpen(false)}
         >
+          {processedImage && (
+            <div
+              className="inline-flex items-center gap-1 p-1 rounded-xl bg-zinc-900 border border-zinc-700"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setPreviewMode('processed')}
+                className={`min-h-[36px] px-3 rounded-lg text-xs font-medium transition-colors ${
+                  previewMode === 'processed'
+                    ? 'bg-white text-zinc-900'
+                    : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                Cleaned OCR Input
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('original')}
+                className={`min-h-[36px] px-3 rounded-lg text-xs font-medium transition-colors ${
+                  previewMode === 'original'
+                    ? 'bg-white text-zinc-900'
+                    : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                Original Photo
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setLightboxOpen(false)}
@@ -1084,10 +1194,10 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             <X className="w-5 h-5" />
           </button>
           <img
-            src={sourceImage}
+            src={previewMode === 'processed' && processedImage ? processedImage : sourceImage}
             alt="Full scanned note preview"
             referrerPolicy="no-referrer"
-            className="max-w-full max-h-[88vh] object-contain rounded-xl"
+            className="max-w-full max-h-[82vh] object-contain rounded-xl bg-white"
           />
         </div>
       )}

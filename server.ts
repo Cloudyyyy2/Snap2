@@ -9,8 +9,10 @@ import {
   processImageWithLocalOcr,
   decodeBase64Image,
   isHandwritingModelAvailable,
+  getActiveHandwritingModelName,
   OcrProfile,
 } from './server/handwritingRecognizer';
+import { isPrintedModelAvailable, getActivePrintedModelName } from './server/printedRecognizer';
 import { parseReminderLocally } from './server/localReminderParser';
 
 const require = createRequire(import.meta.url);
@@ -78,11 +80,17 @@ app.get('/api/config', (_req, res) => {
 });
 
 app.get('/api/local-ocr/status', (_req, res) => {
+  const hwName = getActiveHandwritingModelName();
+  const printedName = getActivePrintedModelName();
   res.json({
     handwritingModel: isHandwritingModelAvailable() ? 'ready' : 'missing',
-    modelId: 'trocr-small-handwritten',
+    printedModel: isPrintedModelAvailable() ? 'ready' : 'missing',
+    handwritingModelId: hwName,
+    printedModelId: printedName,
+    modelId: `${hwName}+${printedName}`,
     groqConfigured: Boolean(process.env.GROQ_API_KEY),
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    visionConfigured: Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY),
   });
 });
 
@@ -138,8 +146,10 @@ async function extractWithGroq(image: string | null, instructionText: string) {
   contentParts.push({
     type: 'text',
     text: `${instructionText}
+First, carefully read every word in the image (handwritten cursive, block print, printed text, screenshots, bills, or receipts) and transcribe it verbatim into "rawText" preserving line breaks. Do NOT invent, guess unrelated sentences, or hallucinate text not clearly visible.
 Return ONLY valid JSON matching this schema:
 {
+  "rawText": "Exact verbatim line-by-line text visible in the image",
   "title": "Clear concise reminder title",
   "description": "Summary of important details, amounts, or instructions",
   "dueDate": "ISO-8601 date-time string",
@@ -163,7 +173,7 @@ Return ONLY valid JSON matching this schema:
       messages: [
         {
           role: 'system',
-          content: 'You are SnapRemind, a precise assistant that extracts structured reminder JSON from screenshots and notes. Always respond with valid JSON only.',
+          content: 'You are SnapRemind, a high-accuracy OCR and reminder extraction assistant. Transcribe all visible handwritten or printed words faithfully into rawText before structuring reminder JSON. Always respond with valid JSON only.',
         },
         {
           role: 'user',
@@ -171,7 +181,7 @@ Return ONLY valid JSON matching this schema:
         },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.2,
+      temperature: 0.1,
     }),
     signal: AbortSignal.timeout(25000),
   });
@@ -214,6 +224,10 @@ async function generateWithGeminiRetry(parts: Array<Record<string, unknown>>) {
             responseSchema: {
               type: Type.OBJECT,
               properties: {
+                rawText: {
+                  type: Type.STRING,
+                  description: 'Exact verbatim line-by-line text visible in the image (printed or handwritten)',
+                },
                 title: { type: Type.STRING, description: 'Clear concise reminder title' },
                 description: {
                   type: Type.STRING,
@@ -245,7 +259,7 @@ async function generateWithGeminiRetry(parts: Array<Record<string, unknown>>) {
                   items: { type: Type.STRING },
                 },
               },
-              required: ['title', 'description', 'dueDate', 'category', 'priority', 'checklist', 'tags'],
+              required: ['rawText', 'title', 'description', 'dueDate', 'category', 'priority', 'checklist', 'tags'],
             },
           },
         });
@@ -297,8 +311,22 @@ Extract clear, actionable reminder details as JSON.
 - priority must be one of: "high", "medium", "low".
 - dueDate must be a valid ISO-8601 date-time string.`;
 
-    // If user verified local TrOCR text, structure via text-only AI (no need to re-send image) or fall back to offline parser
-    const imageForVision = verifiedOcrText ? null : (image || null);
+    // If user verified OCR text, structure via text-only AI; otherwise orient & gently normalize image for Vision AI
+    let imageForVision: string | null = null;
+    if (!verifiedOcrText && image && typeof image === 'string') {
+      try {
+        const sharp = (await import('sharp')).default;
+        const orientedJpeg = await sharp(decodeBase64Image(image))
+          .rotate()
+          .resize({ width: 1800, withoutEnlargement: true })
+          .normalize()
+          .jpeg({ quality: 92 })
+          .toBuffer();
+        imageForVision = `data:image/jpeg;base64,${orientedJpeg.toString('base64')}`;
+      } catch {
+        imageForVision = image;
+      }
+    }
 
     // Prefer Groq Vision/Text LLM when configured, with Gemini fallback
     if (process.env.GROQ_API_KEY) {
@@ -309,6 +337,7 @@ Extract clear, actionable reminder details as JSON.
             success: true,
             provider: 'groq',
             ocrProfile: ocrProfile || 'auto',
+            rawText: typeof groqResult.rawText === 'string' ? groqResult.rawText.trim() : verifiedOcrText,
             data: groqResult,
           });
         }
@@ -352,6 +381,7 @@ Extract clear, actionable reminder details as JSON.
             success: true,
             provider: 'gemini',
             ocrProfile: ocrProfile || 'auto',
+            rawText: typeof parsedData.rawText === 'string' ? parsedData.rawText.trim() : verifiedOcrText,
             data: parsedData,
           });
         }

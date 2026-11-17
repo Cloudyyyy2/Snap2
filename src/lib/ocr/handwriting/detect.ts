@@ -126,16 +126,40 @@ export function detectHandwriting(
   let totalComps = 0;
 
   for (const box of lines.slice(0, 12)) {
-    const comps = extractLineComponents(binary, w, box.y0, box.y1, box.x0, box.x1);
+    const rawComps = extractLineComponents(binary, w, box.y0, box.y1, box.x0, box.x1);
+    const sized = rawComps.filter((c) => {
+      const cw = c.x1 - c.x0 + 1;
+      const ch = c.y1 - c.y0 + 1;
+      return cw <= w * 0.48 && ch <= h * 0.3 && ch >= 5;
+    });
+    if (sized.length === 0) continue;
+
+    // Exclude small punctuation marks (periods, commas, i-dots) from height/baseline variance
+    const sortedH = sized.map((c) => c.y1 - c.y0 + 1).sort((a, b) => a - b);
+    const medianCompH = sortedH[Math.floor(sortedH.length * 0.5)] || 10;
+    const comps = sized.filter((c) => c.y1 - c.y0 + 1 >= Math.max(6, medianCompH * 0.45));
     if (comps.length === 0) continue;
 
     const lineHeights = comps.map((c) => c.y1 - c.y0 + 1);
-    const lineBottoms = comps.map((c) => c.y1);
     const meanH = lineHeights.reduce((a, b) => a + b, 0) / lineHeights.length;
-
     allHeights.push(...lineHeights);
-    if (meanH > 0) {
-      lineWobbles.push(stdDev(lineBottoms) / meanH);
+
+    // Measure baseline wobble as residual around least-squares line slope (tilt-invariant!)
+    if (meanH > 0 && comps.length >= 3) {
+      const xs = comps.map((c) => (c.x0 + c.x1) * 0.5);
+      const ys = comps.map((c) => c.y1);
+      const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+      let num = 0;
+      let den = 0;
+      for (let i = 0; i < xs.length; i++) {
+        const dx = xs[i] - mx;
+        num += dx * (ys[i] - my);
+        den += dx * dx;
+      }
+      const slope = den > 1e-3 ? num / den : 0;
+      const residuals = ys.map((y, i) => y - (my + slope * (xs[i] - mx)));
+      lineWobbles.push(stdDev(residuals) / meanH);
     }
 
     for (const c of comps) {
@@ -165,10 +189,10 @@ export function detectHandwriting(
       : 0;
   const joinedRatio = wideCount / totalComps;
 
-  // Weighted score tuned to separate uniform printed glyphs from joined cursive strokes
+  // Printed fonts have minimal joined components (< 0.08) and low detrended wobble; cursive scores high on both
   const score = Math.min(
     1,
-    joinedRatio * 1.15 + Math.min(0.4, heightCv * 0.7) + Math.min(0.4, baselineWobble * 1.1)
+    joinedRatio * 1.25 + Math.min(0.35, heightCv * 0.6) + Math.min(0.35, baselineWobble * 1.0)
   );
 
   return {
