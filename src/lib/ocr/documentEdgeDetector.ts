@@ -4,8 +4,6 @@ import {
   orderQuadCorners,
   detectDocumentQuad,
   warpPerspectiveRgba,
-  estimateSkewAngle,
-  rotateGrayscale,
 } from './geometry';
 import { rgbaToGrayscale, binarizeSauvola, flattenDocumentLighting } from './preprocess';
 import { segmentLines, LineBox } from './handwriting/lines';
@@ -60,8 +58,7 @@ export interface DocumentQuadDetectionResult {
 export interface ViewfinderAnalysis {
   isTextInFrame: boolean;
   textDensity: number; // 0..1
-  framingQuality: 'optimal' | 'leveling-needed' | 'searching';
-  estimatedTiltDeg: number;
+  framingQuality: 'optimal' | 'searching';
   message: string;
 }
 
@@ -136,7 +133,6 @@ export function analyzeViewfinderFrame(
       isTextInFrame: false,
       textDensity: 0,
       framingQuality: 'searching',
-      estimatedTiltDeg: 0,
       message: 'Position text within frame',
     };
   }
@@ -147,7 +143,6 @@ export function analyzeViewfinderFrame(
       isTextInFrame: false,
       textDensity: 0,
       framingQuality: 'searching',
-      estimatedTiltDeg: 0,
       message: 'Position text within frame',
     };
   }
@@ -163,29 +158,13 @@ export function analyzeViewfinderFrame(
   const textDensity = inkCount / (binary.length / 4);
   const isTextInFrame = textDensity >= 0.02 && textDensity <= 0.45;
 
-  let estimatedTiltDeg = 0;
-  if (isTextInFrame) {
-    estimatedTiltDeg = estimateSkewAngle(binary, w, h, { maxAngleDeg: 15, coarseStepDeg: 1 });
-  }
-
-  let framingQuality: 'optimal' | 'leveling-needed' | 'searching' = 'searching';
-  let message = 'Align text or document inside frame';
-
-  if (isTextInFrame) {
-    if (Math.abs(estimatedTiltDeg) <= 3.5) {
-      framingQuality = 'optimal';
-      message = 'Text In Focus · Frame Aligned';
-    } else {
-      framingQuality = 'leveling-needed';
-      message = `Tilt detected (${estimatedTiltDeg > 0 ? '+' : ''}${estimatedTiltDeg.toFixed(1)}°) · Hold Steady`;
-    }
-  }
+  const framingQuality: 'optimal' | 'searching' = isTextInFrame ? 'optimal' : 'searching';
+  const message = isTextInFrame ? 'Text In Focus · Frame Aligned' : 'Align text or document inside frame';
 
   return {
     isTextInFrame,
     textDensity,
     framingQuality,
-    estimatedTiltDeg,
     message,
   };
 }
@@ -459,14 +438,9 @@ export async function detectTextLinesAndHull(
   const workH = canvas.height;
   const imgData = ctx.getImageData(0, 0, workW, workH);
   const gray = rgbaToGrayscale(imgData.data, workW, workH);
-  const rawBin = binarizeSauvola(gray, workW, workH, 14, 0.22);
-
-  // Measure tilt & level horizontal baselines
-  const angleDeg = estimateSkewAngle(rawBin, workW, workH, { maxAngleDeg: 28 });
-  const leveledGray = Math.abs(angleDeg) >= 0.6 ? rotateGrayscale(gray, workW, workH, angleDeg) : gray;
 
   // Erase notebook ruling lines so empty lines aren't treated as text
-  const noRules = removeRuledLines(leveledGray, workW, workH);
+  const noRules = removeRuledLines(gray, workW, workH);
   const binary = binarizeSauvola(noRules, workW, workH, 14, 0.22);
 
   // Extract text line boxes
@@ -600,7 +574,6 @@ export interface LiveTrackedTextResult {
     height: number;
   };
   isTextInFrame: boolean;
-  estimatedTiltDeg: number;
   textDensity: number;
 }
 
@@ -619,7 +592,6 @@ export function trackLiveTextLines(
       lines: [],
       lineCount: 0,
       isTextInFrame: false,
-      estimatedTiltDeg: 0,
       textDensity: 0,
     };
   }
@@ -630,7 +602,6 @@ export function trackLiveTextLines(
       lines: [],
       lineCount: 0,
       isTextInFrame: false,
-      estimatedTiltDeg: 0,
       textDensity: 0,
     };
   }
@@ -651,7 +622,6 @@ export function trackLiveTextLines(
       lines: [],
       lineCount: 0,
       isTextInFrame: false,
-      estimatedTiltDeg: 0,
       textDensity,
     };
   }
@@ -663,12 +633,9 @@ export function trackLiveTextLines(
       lines: [],
       lineCount: 0,
       isTextInFrame: false,
-      estimatedTiltDeg: 0,
       textDensity,
     };
   }
-
-  const estimatedTiltDeg = estimateSkewAngle(binary, w, h, { maxAngleDeg: 25, coarseStepDeg: 1.5 });
 
   const rawTracked: LiveTrackedLine[] = rawLines
     .filter((l) => {
@@ -736,7 +703,9 @@ export function trackLiveTextLines(
     lineCount: smoothedLines.length,
     textHullBox,
     isTextInFrame: smoothedLines.length > 0,
-    estimatedTiltDeg,
     textDensity,
   };
 }
+
+
+

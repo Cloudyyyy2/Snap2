@@ -10,7 +10,7 @@
  * 5. Optional Stage-2 Geometry integration (perspective dewarp & projection deskew)
  */
 
-import { correctDocumentPerspective, deskewGrayscale } from './geometry';
+import { correctDocumentPerspective } from './geometry';
 
 export type ChannelCount = 1 | 3 | 4;
 
@@ -826,17 +826,6 @@ export function preprocessForOcr(
         : 'sauvola-binarize'
   );
 
-  let skewAngle = 0;
-  if (options.deskew) {
-    const deskewRes = deskewGrayscale(gray, binary, w, h, { minCorrectionDeg: 0.6 });
-    skewAngle = deskewRes.angleDeg;
-    if (deskewRes.corrected) {
-      gray = deskewRes.data;
-      binary = computeBinary(gray);
-      appliedSteps.push(`deskew(${skewAngle}deg)`);
-    }
-  }
-
   const morph = options.morphology ?? 'none';
   if (morph === 'open' || morph === 'close') {
     binary = applyMorphologicalOp(binary, w, h, morph, 1);
@@ -857,7 +846,7 @@ export function preprocessForOcr(
     height: h,
     inverted,
     perspectiveWarped,
-    skewAngle,
+    skewAngle: 0,
     appliedSteps,
   };
 }

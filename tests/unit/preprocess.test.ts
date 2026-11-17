@@ -197,7 +197,7 @@ describe('src/lib/ocr/preprocess OCR image preprocessing utility', () => {
     expect(result.appliedSteps).toContain('median-3x3');
     expect(result.appliedSteps).toContain('sauvola-binarize');
     expect(result.appliedSteps).toContain('ink-contrast-stretch');
-    expect(Math.abs(result.skewAngle - 5)).toBeLessThanOrEqual(1.0);
+    expect(result.skewAngle).toBe(0);
 
     // Speck removed cleanly
     expect(result.binary[10 * w + 10]).toBe(255);

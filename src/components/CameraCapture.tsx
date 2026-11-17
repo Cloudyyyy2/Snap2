@@ -506,20 +506,12 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
         setLiveTrackedLines(res.lines);
         setLiveTrackedResult(res);
 
-        // Also sync leveling gauge
         setViewfinderAnalysis({
           isTextInFrame: res.isTextInFrame,
           textDensity: res.textDensity,
-          framingQuality: res.isTextInFrame
-            ? Math.abs(res.estimatedTiltDeg) <= 3.5
-              ? 'optimal'
-              : 'leveling-needed'
-            : 'searching',
-          estimatedTiltDeg: res.estimatedTiltDeg,
+          framingQuality: res.isTextInFrame ? 'optimal' : 'searching',
           message: res.isTextInFrame
-            ? Math.abs(res.estimatedTiltDeg) <= 3.5
-              ? `${res.lineCount} text line${res.lineCount > 1 ? 's' : ''} tracked · Level`
-              : `Tilt detected (${res.estimatedTiltDeg > 0 ? '+' : ''}${res.estimatedTiltDeg.toFixed(1)}°)`
+            ? `${res.lineCount} text line${res.lineCount > 1 ? 's' : ''} tracked`
             : 'Point camera at note or document',
         });
       } catch {
@@ -705,60 +697,36 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                 className={`w-7 h-7 border-t-2 border-l-2 rounded-tl-lg transition-all duration-300 ${
                   viewfinderAnalysis?.framingQuality === 'optimal'
                     ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
-                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
-                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
-                      : 'border-white/50'
+                    : 'border-white/50'
                 }`}
               />
               <div
                 className={`w-7 h-7 border-t-2 border-r-2 rounded-tr-lg transition-all duration-300 ${
                   viewfinderAnalysis?.framingQuality === 'optimal'
                     ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
-                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
-                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
-                      : 'border-white/50'
+                    : 'border-white/50'
                 }`}
               />
             </div>
 
-            {/* Center Status Feedback & Pitch/Tilt Level Gauge */}
+            {/* Center Status Feedback */}
             <div className="flex flex-col items-center justify-center gap-2 my-auto">
               {viewfinderAnalysis && (
                 <div
                   className={`px-3 py-1 rounded-full text-[11px] font-medium backdrop-blur-md border transition-all duration-300 flex items-center gap-1.5 shadow-md ${
                     viewfinderAnalysis.framingQuality === 'optimal'
                       ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/50 ring-2 ring-emerald-500/25'
-                      : viewfinderAnalysis.framingQuality === 'leveling-needed'
-                        ? 'bg-cyan-950/85 text-cyan-300 border-cyan-500/50 ring-2 ring-cyan-500/25'
-                        : 'bg-zinc-950/75 text-zinc-300 border-zinc-700/60'
+                      : 'bg-zinc-950/75 text-zinc-300 border-zinc-700/60'
                   }`}
                 >
                   <div
                     className={`w-1.5 h-1.5 rounded-full ${
                       viewfinderAnalysis.framingQuality === 'optimal'
                         ? 'bg-emerald-400 animate-pulse'
-                        : viewfinderAnalysis.framingQuality === 'leveling-needed'
-                          ? 'bg-cyan-400'
-                          : 'bg-zinc-500'
+                        : 'bg-zinc-500'
                     }`}
                   />
                   <span>{viewfinderAnalysis.message}</span>
-                </div>
-              )}
-
-              {/* Horizontal leveling gauge */}
-              {viewfinderAnalysis && viewfinderAnalysis.isTextInFrame && (
-                <div className="w-28 h-1.5 bg-black/50 backdrop-blur-sm rounded-full overflow-hidden border border-white/20 relative flex items-center">
-                  <div
-                    style={{
-                      transform: `translateX(${Math.max(-44, Math.min(44, (viewfinderAnalysis.estimatedTiltDeg / 15) * 44))}px)`,
-                    }}
-                    className={`w-3 h-full m-auto rounded-full transition-transform duration-150 ${
-                      Math.abs(viewfinderAnalysis.estimatedTiltDeg) <= 3.5
-                        ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'
-                        : 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.8)]'
-                    }`}
-                  />
                 </div>
               )}
             </div>
@@ -769,18 +737,14 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                 className={`w-7 h-7 border-b-2 border-l-2 rounded-bl-lg transition-all duration-300 ${
                   viewfinderAnalysis?.framingQuality === 'optimal'
                     ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
-                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
-                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
-                      : 'border-white/50'
+                    : 'border-white/50'
                 }`}
               />
               <div
                 className={`w-7 h-7 border-b-2 border-r-2 rounded-br-lg transition-all duration-300 ${
                   viewfinderAnalysis?.framingQuality === 'optimal'
                     ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]'
-                    : viewfinderAnalysis?.framingQuality === 'leveling-needed'
-                      ? 'border-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
-                      : 'border-white/50'
+                    : 'border-white/50'
                 }`}
               />
             </div>

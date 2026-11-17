@@ -1157,11 +1157,6 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                       {scanMeta.accuracyScore}% confidence
                     </span>
                   )}
-                  {scanMeta?.skewAngle !== undefined && Math.abs(scanMeta.skewAngle) >= 0.5 && (
-                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px]">
-                      Leveled {Math.abs(scanMeta.skewAngle).toFixed(1)}°
-                    </span>
-                  )}
                 </div>
               </div>
 
