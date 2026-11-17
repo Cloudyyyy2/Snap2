@@ -15,6 +15,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { CameraCapture } from './CameraCapture';
+import { InteractiveQuadCropper } from './InteractiveQuadCropper';
 import { Reminder, Category, Priority, ChecklistItem, DetectedStyle } from '../types';
 import { detectWordsOnImage, DetectedWordSquare } from '../lib/ocr/onDeviceWordDetector';
 
@@ -97,6 +98,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
   const [previewMode, setPreviewMode] = useState<'original' | 'processed'>('processed');
   const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [manualCropModalOpen, setManualCropModalOpen] = useState(false);
 
   const [isScanning, setIsScanning] = useState(false);
   const [statusStep, setStatusStep] = useState('');
@@ -630,14 +632,28 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={closeReviewSheet}
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 shrink-0"
-                aria-label="Close review sheet"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {sourceImage && !isScanning && (
+                  <button
+                    type="button"
+                    onClick={() => setManualCropModalOpen(true)}
+                    className="min-h-[38px] px-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-800/80 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-xs font-medium text-zinc-700 dark:text-zinc-200 inline-flex items-center gap-1.5"
+                    title="Adjust crop corners and perspective"
+                  >
+                    <Crop className="w-3.5 h-3.5 text-cyan-500" />
+                    <span className="hidden sm:inline">Adjust Frame</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={closeReviewSheet}
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  aria-label="Close review sheet"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Scrollable Body */}
@@ -1078,7 +1094,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                 onClick={() => setPreviewMode('processed')}
                 className={`min-h-[36px] px-3 rounded-lg text-xs font-medium transition-colors ${
                   previewMode === 'processed'
-                    ? 'bg-white text-zinc-900'
+                    ? 'bg-white text-zinc-900 font-semibold'
                     : 'text-zinc-300 hover:text-white'
                 }`}
               >
@@ -1089,11 +1105,23 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                 onClick={() => setPreviewMode('original')}
                 className={`min-h-[36px] px-3 rounded-lg text-xs font-medium transition-colors ${
                   previewMode === 'original'
-                    ? 'bg-white text-zinc-900'
+                    ? 'bg-white text-zinc-900 font-semibold'
                     : 'text-zinc-300 hover:text-white'
                 }`}
               >
                 Original Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxOpen(false);
+                  setManualCropModalOpen(true);
+                }}
+                className="min-h-[36px] px-2.5 rounded-lg text-xs font-medium text-cyan-300 hover:text-white inline-flex items-center gap-1 border border-cyan-500/30 bg-cyan-950/40 ml-1"
+                title="Adjust crop corners and perspective"
+              >
+                <Crop className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Adjust Frame</span>
               </button>
             </div>
           )}
@@ -1142,6 +1170,45 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* On-Demand Manual Crop / Perspective Dewarp Modal */}
+      {manualCropModalOpen && sourceImage && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-sm"
+          onClick={() => setManualCropModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-xl bg-white dark:bg-zinc-900 rounded-3xl p-4 sm:p-5 space-y-3 border border-zinc-200 dark:border-zinc-800 shadow-2xl max-h-[96vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-1 border-b border-zinc-200 dark:border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Crop className="w-4 h-4 text-cyan-500" />
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Adjust Frame & Perspective
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManualCropModalOpen(false)}
+                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                aria-label="Close crop modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <InteractiveQuadCropper
+              imageSource={sourceImage}
+              onApplyDewarp={(dewarpedDataUrl) => {
+                setManualCropModalOpen(false);
+                runExtractionPipeline(dewarpedDataUrl);
+              }}
+              onCancelOrFull={() => setManualCropModalOpen(false)}
+            />
+          </div>
         </div>
       )}
     </div>

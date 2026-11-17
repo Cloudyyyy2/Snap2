@@ -581,3 +581,162 @@ export async function rotateImageBase64(
 
   return canvas.toDataURL('image/jpeg', 0.94);
 }
+
+export interface LiveTrackedLine {
+  id: string;
+  x: number;      // normalized 0..1
+  y: number;      // normalized 0..1
+  width: number;  // normalized 0..1
+  height: number; // normalized 0..1
+}
+
+export interface LiveTrackedTextResult {
+  lines: LiveTrackedLine[];
+  lineCount: number;
+  textHullBox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  isTextInFrame: boolean;
+  estimatedTiltDeg: number;
+  textDensity: number;
+}
+
+/**
+ * Ultra-fast (< 10ms) live text line and word tracker running continuously over downsampled camera frames.
+ * Powers real-time glowing bounding ribbons directly in the active viewfinder.
+ */
+export function trackLiveTextLines(
+  canvas: HTMLCanvasElement,
+  prevLines: LiveTrackedLine[] = []
+): LiveTrackedTextResult {
+  const w = canvas.width;
+  const h = canvas.height;
+  if (w < 40 || h < 40) {
+    return {
+      lines: [],
+      lineCount: 0,
+      isTextInFrame: false,
+      estimatedTiltDeg: 0,
+      textDensity: 0,
+    };
+  }
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    return {
+      lines: [],
+      lineCount: 0,
+      isTextInFrame: false,
+      estimatedTiltDeg: 0,
+      textDensity: 0,
+    };
+  }
+
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const gray = rgbaToGrayscale(imgData.data, w, h);
+  const binary = binarizeSauvola(gray, w, h, 12, 0.22);
+
+  let inkCount = 0;
+  for (let i = 0; i < binary.length; i += 4) {
+    if (binary[i] === 0) inkCount++;
+  }
+  const textDensity = inkCount / (binary.length / 4);
+
+  // Require credible ink presence (ignore solid white or solid black frames)
+  if (textDensity < 0.015 || textDensity > 0.5) {
+    return {
+      lines: [],
+      lineCount: 0,
+      isTextInFrame: false,
+      estimatedTiltDeg: 0,
+      textDensity,
+    };
+  }
+
+  // Segment candidate text lines
+  const rawLines = segmentLines(binary, w, h);
+  if (rawLines.length === 0) {
+    return {
+      lines: [],
+      lineCount: 0,
+      isTextInFrame: false,
+      estimatedTiltDeg: 0,
+      textDensity,
+    };
+  }
+
+  const estimatedTiltDeg = estimateSkewAngle(binary, w, h, { maxAngleDeg: 25, coarseStepDeg: 1.5 });
+
+  const rawTracked: LiveTrackedLine[] = rawLines
+    .filter((l) => {
+      const bw = l.x1 - l.x0;
+      const bh = l.y1 - l.y0;
+      // Filter out tiny 2px noise specks or page-border full screen bars
+      return bw >= w * 0.06 && bh >= 6 && bh <= h * 0.45;
+    })
+    .map((l, idx) => ({
+      id: `live-line-${idx}`,
+      x: Math.max(0, Math.min(1, l.x0 / w)),
+      y: Math.max(0, Math.min(1, l.y0 / h)),
+      width: Math.max(0.02, Math.min(1, (l.x1 - l.x0) / w)),
+      height: Math.max(0.02, Math.min(1, (l.y1 - l.y0) / h)),
+    }));
+
+  // Exponential moving average (EMA) smoothing against prevLines to eliminate frame-to-frame jitter
+  const smoothedLines = rawTracked.map((curr) => {
+    const match = prevLines.find((prev) => {
+      const vOverlap = Math.max(
+        0,
+        Math.min(prev.y + prev.height, curr.y + curr.height) - Math.max(prev.y, curr.y)
+      );
+      return vOverlap > curr.height * 0.35;
+    });
+
+    if (match) {
+      return {
+        id: match.id,
+        x: Number((match.x * 0.35 + curr.x * 0.65).toFixed(4)),
+        y: Number((match.y * 0.35 + curr.y * 0.65).toFixed(4)),
+        width: Number((match.width * 0.35 + curr.width * 0.65).toFixed(4)),
+        height: Number((match.height * 0.35 + curr.height * 0.65).toFixed(4)),
+      };
+    }
+    return curr;
+  });
+
+  let textHullBox: { x: number; y: number; width: number; height: number } | undefined;
+  if (smoothedLines.length > 0) {
+    let minX = 1;
+    let minY = 1;
+    let maxX = 0;
+    let maxY = 0;
+
+    for (const l of smoothedLines) {
+      if (l.x < minX) minX = l.x;
+      if (l.y < minY) minY = l.y;
+      if (l.x + l.width > maxX) maxX = l.x + l.width;
+      if (l.y + l.height > maxY) maxY = l.y + l.height;
+    }
+
+    const padX = 0.06;
+    const padY = 0.06;
+    const hx = Math.max(0, minX - padX);
+    const hy = Math.max(0, minY - padY);
+    const hw = Math.min(1 - hx, maxX - minX + padX * 2);
+    const hh = Math.min(1 - hy, maxY - minY + padY * 2);
+
+    textHullBox = { x: hx, y: hy, width: hw, height: hh };
+  }
+
+  return {
+    lines: smoothedLines,
+    lineCount: smoothedLines.length,
+    textHullBox,
+    isTextInFrame: smoothedLines.length > 0,
+    estimatedTiltDeg,
+    textDensity,
+  };
+}

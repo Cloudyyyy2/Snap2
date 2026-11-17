@@ -3,6 +3,7 @@ import {
   isPointInPolygon,
   isBoxInPolygon,
   detectTextBlockQuad,
+  trackLiveTextLines,
 } from '../../src/lib/ocr/documentEdgeDetector';
 import { flattenDocumentLighting } from '../../src/lib/ocr/preprocess';
 
@@ -159,4 +160,75 @@ describe('Modern Crop Enhancement & Text Containment Pipeline', () => {
       expect(quad).toBeNull();
     });
   });
+
+  describe('trackLiveTextLines (Live Viewfinder Text Detection)', () => {
+    function createMockCanvas(
+      width: number,
+      height: number,
+      drawLines: Array<{ y: number; height: number; x0: number; x1: number }>
+    ) {
+      const data = new Uint8ClampedArray(width * height * 4).fill(255);
+      for (const line of drawLines) {
+        for (let y = line.y; y < line.y + line.height; y++) {
+          if (y < 0 || y >= height) continue;
+          for (let x = line.x0; x < line.x1; x++) {
+            if (x < 0 || x >= width) continue;
+            const idx = (y * width + x) * 4;
+            data[idx] = 20;
+            data[idx + 1] = 20;
+            data[idx + 2] = 20;
+            data[idx + 3] = 255;
+          }
+        }
+      }
+      return {
+        width,
+        height,
+        getContext: () => ({
+          getImageData: (_x: number, _y: number, w: number, h: number) => ({
+            width: w,
+            height: h,
+            data,
+          }),
+        }),
+      } as unknown as HTMLCanvasElement;
+    }
+
+    it('returns empty results on blank or undersized frames', () => {
+      const smallCanvas = createMockCanvas(30, 30, []);
+      const result = trackLiveTextLines(smallCanvas);
+      expect(result.isTextInFrame).toBe(false);
+      expect(result.lineCount).toBe(0);
+
+      const blankCanvas = createMockCanvas(200, 150, []);
+      const blankResult = trackLiveTextLines(blankCanvas);
+      expect(blankResult.isTextInFrame).toBe(false);
+      expect(blankResult.lines.length).toBe(0);
+    });
+
+    it('tracks live text lines and computes smoothed bounding ribbons and text hull', () => {
+      const w = 240;
+      const h = 180;
+      // 2 horizontal text lines
+      const mockCanvas = createMockCanvas(w, h, [
+        { y: 40, height: 14, x0: 30, x1: 200 },
+        { y: 80, height: 14, x0: 30, x1: 180 },
+      ]);
+
+      const res = trackLiveTextLines(mockCanvas);
+      expect(res.isTextInFrame).toBe(true);
+      expect(res.lineCount).toBeGreaterThanOrEqual(1);
+      expect(res.textHullBox).toBeDefined();
+      if (res.textHullBox) {
+        expect(res.textHullBox.width).toBeGreaterThan(0.4);
+        expect(res.textHullBox.height).toBeGreaterThan(0.2);
+      }
+
+      // Test EMA smoothing with previous frame lines
+      const resSmoothed = trackLiveTextLines(mockCanvas, res.lines);
+      expect(resSmoothed.lines.length).toBeGreaterThanOrEqual(1);
+      expect(resSmoothed.lines[0].id).toBe(res.lines[0].id);
+    });
+  });
 });
+

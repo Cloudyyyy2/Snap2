@@ -21,6 +21,9 @@ import {
 import {
   analyzeViewfinderFrame,
   ViewfinderAnalysis,
+  trackLiveTextLines,
+  LiveTrackedLine,
+  LiveTrackedTextResult,
 } from '../lib/ocr/documentEdgeDetector';
 import { InteractiveQuadCropper } from './InteractiveQuadCropper';
 
@@ -69,6 +72,12 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
   const [selectedWord, setSelectedWord] = useState<DetectedWordSquare | null>(null);
   const [isDetectingWords, setIsDetectingWords] = useState(false);
   const [isApplyingCrop, setIsApplyingCrop] = useState(false);
+
+  // Live real-time text line tracking states & glowing ribbons
+  const [liveTrackedLines, setLiveTrackedLines] = useState<LiveTrackedLine[]>([]);
+  const [liveTrackedResult, setLiveTrackedResult] = useState<LiveTrackedTextResult | null>(null);
+  const prevTrackedLinesRef = useRef<LiveTrackedLine[]>([]);
+  const trackingCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Live optical framing reticle & tilt analysis states
   const [showReticleGuide, setShowReticleGuide] = useState(true);
@@ -348,13 +357,8 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
 
   const handleCapturedImageReady = (dataUrl: string) => {
     stopStream();
-    if (autoDewarp) {
-      setPendingDewarpImage(dataUrl);
-    } else if (autoSquareCrop) {
-      handleRunWordDetection(dataUrl);
-    } else {
-      onCapture(dataUrl);
-    }
+    // Direct-to-OCR: eliminate mandatory cropping roadblocks
+    onCapture(dataUrl);
   };
 
   const handleApplyAllWordsSquareCrop = async () => {
@@ -473,21 +477,23 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
 
   const liveReady = !isStarting && !errorMsg && !paused;
 
-  // Background frame inspection for live optical reticle & tilt guidance
+  // Real-time continuous live text tracking loop running over video frames (~22 FPS)
   useEffect(() => {
-    if (!liveReady || !showReticleGuide || pendingCropImage || pendingDewarpImage) {
+    if (!liveReady) {
+      setLiveTrackedLines([]);
+      setLiveTrackedResult(null);
       return;
     }
 
-    if (!analysisCanvasRef.current) {
-      analysisCanvasRef.current = document.createElement('canvas');
-      analysisCanvasRef.current.width = 120;
-      analysisCanvasRef.current.height = 90;
+    if (!trackingCanvasRef.current) {
+      trackingCanvasRef.current = document.createElement('canvas');
+      trackingCanvasRef.current.width = 320;
+      trackingCanvasRef.current.height = 240;
     }
 
     const intervalId = window.setInterval(() => {
       const video = videoRef.current;
-      const canvas = analysisCanvasRef.current;
+      const canvas = trackingCanvasRef.current;
       if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) return;
 
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -495,17 +501,36 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
 
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const analysis = analyzeViewfinderFrame(canvas);
-        setViewfinderAnalysis(analysis);
+        const res = trackLiveTextLines(canvas, prevTrackedLinesRef.current);
+        prevTrackedLinesRef.current = res.lines;
+        setLiveTrackedLines(res.lines);
+        setLiveTrackedResult(res);
+
+        // Also sync leveling gauge
+        setViewfinderAnalysis({
+          isTextInFrame: res.isTextInFrame,
+          textDensity: res.textDensity,
+          framingQuality: res.isTextInFrame
+            ? Math.abs(res.estimatedTiltDeg) <= 3.5
+              ? 'optimal'
+              : 'leveling-needed'
+            : 'searching',
+          estimatedTiltDeg: res.estimatedTiltDeg,
+          message: res.isTextInFrame
+            ? Math.abs(res.estimatedTiltDeg) <= 3.5
+              ? `${res.lineCount} text line${res.lineCount > 1 ? 's' : ''} tracked · Level`
+              : `Tilt detected (${res.estimatedTiltDeg > 0 ? '+' : ''}${res.estimatedTiltDeg.toFixed(1)}°)`
+            : 'Point camera at note or document',
+        });
       } catch {
         // ignore occasional cross-frame draw race
       }
-    }, 240);
+    }, 45);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [liveReady, showReticleGuide, pendingCropImage, pendingDewarpImage]);
+  }, [liveReady]);
 
   // When a photo has been captured or selected and autoDewarp is active, present the interactive 4-corner quad cropper
   if (pendingDewarpImage) {
@@ -513,7 +538,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
       <div className="space-y-3">
         <InteractiveQuadCropper
           imageSource={pendingDewarpImage}
-          onApplyDewarp={(dewarpedDataUrl) => {
+          onApplyDewarp={(dewarpedDataUrl: string) => {
             setPendingDewarpImage(null);
             if (autoSquareCrop) {
               handleRunWordDetection(dewarpedDataUrl);
@@ -644,6 +669,31 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
               facingMode === 'user' ? 'scale-x-[-1]' : ''
             } ${liveReady ? 'opacity-100' : 'opacity-0'}`}
           />
+        )}
+
+        {/* Real-Time Live Text Detection Glowing Ribbons Layer */}
+        {!pendingCropImage && liveReady && liveTrackedLines.length > 0 && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+            <defs>
+              <filter id="live-text-glow" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+            </defs>
+            {liveTrackedLines.map((line) => (
+              <rect
+                key={line.id}
+                x={`${line.x * 100}%`}
+                y={`${line.y * 100}%`}
+                width={`${line.width * 100}%`}
+                height={`${line.height * 100}%`}
+                rx="4"
+                ry="4"
+                filter="url(#live-text-glow)"
+                className="fill-cyan-400/20 stroke-cyan-400 stroke-[2] transition-all duration-150"
+              />
+            ))}
+          </svg>
         )}
 
         {/* Dynamic Live Optical Reticle Guide HUD */}
@@ -1023,10 +1073,22 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
               type="button"
               onClick={handleCaptureFrame}
               disabled={!liveReady || isCapturing}
-              className="min-h-[48px] flex-1 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 text-white text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all"
+              className={`min-h-[52px] flex-1 px-4 rounded-xl active:scale-[0.98] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all shadow-md ${
+                liveTrackedLines.length > 0
+                  ? 'bg-cyan-600 hover:bg-cyan-700 shadow-cyan-900/30 ring-2 ring-cyan-400/50'
+                  : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-900/20'
+              }`}
             >
-              <Camera className="w-4 h-4 shrink-0" />
-              <span>Take Photo</span>
+              {liveTrackedLines.length > 0 ? (
+                <Sparkles className="w-4 h-4 shrink-0 text-cyan-200 animate-pulse" />
+              ) : (
+                <Camera className="w-4 h-4 shrink-0" />
+              )}
+              <span>
+                {liveTrackedLines.length > 0
+                  ? `Freeze Note (${liveTrackedLines.length} line${liveTrackedLines.length > 1 ? 's' : ''})`
+                  : 'Freeze & Read Note'}
+              </span>
             </button>
 
             <button
