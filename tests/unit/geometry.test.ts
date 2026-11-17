@@ -4,6 +4,7 @@ import {
   solveHomography,
   applyHomographyPoint,
   warpPerspectiveQuad,
+  warpPerspectiveRgba,
   detectDocumentQuad,
   correctDocumentPerspective,
   estimateSkewAngle,
@@ -218,5 +219,74 @@ describe('geometric & spatial correction (deskewing & perspective dewarping)', (
     const rotated = rotateGrayscale(flat, w, h, 5);
     expect(rotated.length).toBe(flat.length);
     expect(rotated[0]).toBe(255); // exposed corner filled cleanly with paper white
+  });
+
+  it('warpPerspectiveRgba rectifies a 4-channel RGBA trapezoid without color distortion or NaN values', () => {
+    const srcW = 300;
+    const srcH = 200;
+    // Dark desk: RGBA (35, 30, 25, 255)
+    const rgba = new Uint8ClampedArray(srcW * srcH * 4);
+    for (let i = 0; i < srcW * srcH; i++) {
+      rgba[i * 4] = 35;
+      rgba[i * 4 + 1] = 30;
+      rgba[i * 4 + 2] = 25;
+      rgba[i * 4 + 3] = 255;
+    }
+
+    // Yellow sticky note quadrilateral: RGBA (254, 240, 138, 255)
+    const quad: QuadCorners = [
+      { x: 50, y: 30 },
+      { x: 250, y: 45 },
+      { x: 280, y: 175 },
+      { x: 30, y: 160 },
+    ];
+
+    // Paint interior of the trapezoid yellow
+    const [tl, tr, br, bl] = quad;
+    for (let y = 30; y <= 175; y++) {
+      const vL = (y - tl.y) / Math.max(1, bl.y - tl.y);
+      const vR = (y - tr.y) / Math.max(1, br.y - tr.y);
+      const lx = Math.round(tl.x + (bl.x - tl.x) * Math.max(0, Math.min(1, vL)));
+      const rx = Math.round(tr.x + (br.x - tr.x) * Math.max(0, Math.min(1, vR)));
+      for (let x = lx; x <= rx; x++) {
+        const u = (x - lx) / Math.max(1, rx - lx);
+        const topY = tl.y + (tr.y - tl.y) * u;
+        const botY = bl.y + (br.y - bl.y) * u;
+        if (y >= topY && y <= botY) {
+          const off = (y * srcW + x) * 4;
+          rgba[off] = 254; // Red
+          rgba[off + 1] = 240; // Green
+          rgba[off + 2] = 138; // Blue
+          rgba[off + 3] = 255; // Alpha
+        }
+      }
+    }
+
+    const warped = warpPerspectiveRgba(rgba, srcW, srcH, quad, {
+      targetWidth: 200,
+      targetHeight: 140,
+    });
+
+    expect(warped.width).toBe(200);
+    expect(warped.height).toBe(140);
+    expect(warped.data.length).toBe(200 * 140 * 4);
+    expect(warped.homography).not.toBeNull();
+
+    // Verify interior pixels are yellow sticky note (not dark desk)
+    const sampleX = 100;
+    const sampleY = 70;
+    const sampleOff = (sampleY * warped.width + sampleX) * 4;
+    expect(warped.data[sampleOff]).toBeGreaterThan(240); // R
+    expect(warped.data[sampleOff + 1]).toBeGreaterThan(220); // G
+    expect(warped.data[sampleOff + 2]).toBeLessThan(160); // B
+    expect(warped.data[sampleOff + 3]).toBe(255); // A
+
+    // Ensure no NaNs or uninitialized channels in output buffer
+    for (let i = 0; i < warped.data.length; i += 4) {
+      expect(Number.isNaN(warped.data[i])).toBe(false);
+      expect(Number.isNaN(warped.data[i + 1])).toBe(false);
+      expect(Number.isNaN(warped.data[i + 2])).toBe(false);
+      expect(warped.data[i + 3]).toBe(255);
+    }
   });
 });

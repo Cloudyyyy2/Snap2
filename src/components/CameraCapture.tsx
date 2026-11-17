@@ -17,6 +17,7 @@ import {
   WordDetectionResult,
   DetectedWordSquare,
 } from '../lib/ocr/onDeviceWordDetector';
+import { InteractiveQuadCropper } from './InteractiveQuadCropper';
 
 interface CameraCaptureProps {
   onCapture: (dataUrl: string) => void;
@@ -54,7 +55,9 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // On-device versatile word-edge detection and square cropping states
+  // On-device perspective quad dewarp and versatile word-edge detection states
+  const [autoDewarp, setAutoDewarp] = useState(true);
+  const [pendingDewarpImage, setPendingDewarpImage] = useState<string | null>(null);
   const [autoSquareCrop, setAutoSquareCrop] = useState(true);
   const [pendingCropImage, setPendingCropImage] = useState<string | null>(null);
   const [wordDetection, setWordDetection] = useState<WordDetectionResult | null>(null);
@@ -303,14 +306,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
     startCamera({ deviceId: '', facing: nextFacing });
   };
 
-  const handleCapturedImageReady = async (dataUrl: string) => {
-    if (!autoSquareCrop) {
-      stopStream();
-      onCapture(dataUrl);
-      return;
-    }
-
-    stopStream();
+  const handleRunWordDetection = async (dataUrl: string) => {
     setPendingCropImage(dataUrl);
     setIsDetectingWords(true);
     setSelectedWord(null);
@@ -337,6 +333,17 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
       onCapture(dataUrl);
     } finally {
       setIsDetectingWords(false);
+    }
+  };
+
+  const handleCapturedImageReady = (dataUrl: string) => {
+    stopStream();
+    if (autoDewarp) {
+      setPendingDewarpImage(dataUrl);
+    } else if (autoSquareCrop) {
+      handleRunWordDetection(dataUrl);
+    } else {
+      onCapture(dataUrl);
     }
   };
 
@@ -394,6 +401,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
   };
 
   const handleRetake = () => {
+    setPendingDewarpImage(null);
     setPendingCropImage(null);
     setWordDetection(null);
     setSelectedWord(null);
@@ -454,6 +462,35 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
   };
 
   const liveReady = !isStarting && !errorMsg && !paused;
+
+  // When a photo has been captured or selected and autoDewarp is active, present the interactive 4-corner quad cropper
+  if (pendingDewarpImage) {
+    return (
+      <div className="space-y-3">
+        <InteractiveQuadCropper
+          imageSource={pendingDewarpImage}
+          onApplyDewarp={(dewarpedDataUrl) => {
+            setPendingDewarpImage(null);
+            if (autoSquareCrop) {
+              handleRunWordDetection(dewarpedDataUrl);
+            } else {
+              onCapture(dewarpedDataUrl);
+            }
+          }}
+          onCancelOrFull={() => {
+            const raw = pendingDewarpImage;
+            setPendingDewarpImage(null);
+            if (autoSquareCrop) {
+              handleRunWordDetection(raw);
+            } else {
+              onCapture(raw);
+            }
+          }}
+          onRetake={handleRetake}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -817,6 +854,24 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
             <button
               type="button"
               disabled={isApplyingCrop}
+              onClick={() => {
+                if (pendingCropImage) {
+                  setPendingDewarpImage(pendingCropImage);
+                  setPendingCropImage(null);
+                  setWordDetection(null);
+                  setSelectedWord(null);
+                }
+              }}
+              className="min-h-[48px] px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-cyan-600 dark:text-cyan-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+              title="Adjust 4 document corners"
+            >
+              <Crop className="w-3.5 h-3.5" />
+              <span>Dewarp</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isApplyingCrop}
               onClick={handleKeepFullPhoto}
               className="min-h-[48px] px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
             >
@@ -860,20 +915,37 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
             </button>
           </div>
 
-          {/* Versatile Square-Crop Mode Toggle + Native OS Cam */}
-          <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-            <button
-              type="button"
-              onClick={() => setAutoSquareCrop((v) => !v)}
-              className={`min-h-[32px] px-2.5 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
-                autoSquareCrop
-                  ? 'border-indigo-500/50 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
-                  : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400'
-              }`}
-            >
-              <Crop className="w-3 h-3" />
-              <span>{autoSquareCrop ? 'Auto-Square Words: ON' : 'Square Crop: OFF'}</span>
-            </button>
+          {/* Edge Dewarp & Square-Crop Mode Toggles + Native OS Cam */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setAutoDewarp((v) => !v)}
+                className={`min-h-[32px] px-2.5 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                  autoDewarp
+                    ? 'border-cyan-500/50 bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300'
+                    : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400'
+                }`}
+                title="Automatically detect 4 document edges and rectify perspective distortion"
+              >
+                <Sparkles className="w-3 h-3 text-cyan-500" />
+                <span>{autoDewarp ? 'Auto-Dewarp: ON' : 'Dewarp: OFF'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAutoSquareCrop((v) => !v)}
+                className={`min-h-[32px] px-2.5 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                  autoSquareCrop
+                    ? 'border-indigo-500/50 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
+                    : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400'
+                }`}
+                title="Detect word bounding edges and fit into square crops"
+              >
+                <Crop className="w-3 h-3" />
+                <span>{autoSquareCrop ? 'Words Square: ON' : 'Words: OFF'}</span>
+              </button>
+            </div>
 
             <button
               type="button"
