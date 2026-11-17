@@ -974,3 +974,28 @@ export function preprocessImageData(
     channels: 4,
   });
 }
+
+/**
+ * Retinex-based localized background illumination flattening and shadow removal.
+ * Computes background estimation, normalizes lighting, and deepens text ink contrast.
+ */
+export function flattenDocumentLighting(
+  rgba: Uint8ClampedArray,
+  w: number,
+  h: number
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h * 4);
+  const gray = rgbaToGrayscale(rgba, w, h);
+  const bg = flattenBackground(gray, w, h);
+  const contrast = enhanceInkContrast(bg, w, h);
+
+  for (let i = 0; i < w * h; i++) {
+    const val = contrast[i];
+    const off = i * 4;
+    out[off] = val;
+    out[off + 1] = val;
+    out[off + 2] = val;
+    out[off + 3] = 255;
+  }
+  return out;
+}
