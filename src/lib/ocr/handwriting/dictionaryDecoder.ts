@@ -6,10 +6,12 @@
 
 const COMMON_WORDS = new Set([
   'call', 'mom', 'milk', 'eggs', 'bread', 'groceries', 'meeting', 'dentist',
-  'pick', 'up', 'buy', 'milk', 'store', 'market', 'coffee', 'water', 'gym',
+  'pick', 'up', 'buy', 'store', 'market', 'coffee', 'water', 'gym',
   'workout', 'run', 'read', 'book', 'study', 'code', 'build', 'ship', 'test',
   'email', 'boss', 'client', 'project', 'deadline', 'today', 'tomorrow', 'tonight',
-  'reminder', 'task', 'note', 'schedule', 'doctor', 'appointment', 'pay', 'bills'
+  'reminder', 'task', 'note', 'schedule', 'doctor', 'appointment', 'pay', 'bills',
+  'crisps', 'pan', 'au', 'chocolat', 'lunch', 'for', 'salmon', 'asparagus',
+  'bacon', 'turkey', 'spinach', 'mince', 'sundried', 'tomatoes', 'broccoli', 'browlli'
 ]);
 
 const CONFUSION_MATRIX: Record<string, string[]> = {

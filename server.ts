@@ -206,7 +206,7 @@ Return ONLY valid JSON matching this schema:
 }
 
 async function generateWithGeminiRetry(parts: Array<Record<string, unknown>>) {
-  const models = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro'];
   let lastError: unknown;
 
   for (const model of models) {
@@ -217,9 +217,6 @@ async function generateWithGeminiRetry(parts: Array<Record<string, unknown>>) {
           contents: { parts },
           config: {
             abortSignal: AbortSignal.timeout(25000),
-            thinkingConfig: {
-              thinkingLevel: model === 'gemini-3.1-flash-lite' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW,
-            },
             responseMimeType: 'application/json',
             responseSchema: {
               type: Type.OBJECT,

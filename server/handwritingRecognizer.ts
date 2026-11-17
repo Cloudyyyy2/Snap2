@@ -1148,7 +1148,7 @@ export async function processImageWithLocalOcr(params: {
   const hw = await runOfflineHandwritingOnLines(lineBoxes, true);
   const hwPlaus = scoreTextPlausibility(hw.text, hw.qualityScore);
 
-  if (ocrProfile === 'auto' && printedModelReady && (hw.qualityScore < 0.65 || !hw.text || hwPlaus < 0.56)) {
+  if (ocrProfile === 'auto' && printedModelReady && !detection.isHandwriting && (hw.qualityScore < 0.65 || !hw.text || hwPlaus < 0.56)) {
     const printedFallback = await runOfflinePrintedOnBoxes(regions);
     const printedPlaus = scoreTextPlausibility(printedFallback.text, printedFallback.qualityScore);
     if (printedFallback.text && (printedPlaus >= hwPlaus + 0.08 || !hw.text)) {
