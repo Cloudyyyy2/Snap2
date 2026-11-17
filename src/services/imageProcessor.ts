@@ -8,21 +8,36 @@ import { PreprocessOptions, preprocessImageData } from '../lib/ocr/preprocess';
 
 /**
  * High-performance Gaussian adaptive thresholding function for OCR flow.
- * Uses integral images for $O(1)$ sliding window local intensity threshold calculation,
- * normalizing handwriting contrast and eliminating shadows across uneven lighting conditions.
+ * Accepts an HTMLCanvasElement or ImageData, applies local intensity normalization,
+ * removes background noise and shadows, and returns the binarized ImageData.
  */
-export function preprocessForOCR(canvas: HTMLCanvasElement): ImageData {
-  if (!canvas || typeof canvas.width !== 'number' || typeof canvas.height !== 'number') {
-    throw new Error('Valid HTMLCanvasElement required for preprocessForOCR');
+export function preprocessForOCR(source: HTMLCanvasElement | ImageData | any): ImageData {
+  if (!source || typeof source.width !== 'number' || typeof source.height !== 'number') {
+    throw new Error('Valid HTMLCanvasElement or ImageData required for preprocessForOCR');
   }
 
-  const width = canvas.width;
-  const height = canvas.height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Canvas 2D context unavailable');
+  const width = source.width;
+  const height = source.height;
+  let rgbaData: Uint8ClampedArray;
 
-  const imgData = ctx.getImageData(0, 0, width, height);
-  const rgbaData = imgData.data;
+  if (source && typeof source.getContext === 'function') {
+    const ctx = source.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('Canvas 2D context unavailable');
+    const imgData = ctx.getImageData(0, 0, width, height);
+    rgbaData = imgData.data instanceof Uint8ClampedArray ? imgData.data : new Uint8ClampedArray(imgData.data);
+  } else if (source && source.data) {
+    rgbaData = source.data instanceof Uint8ClampedArray ? source.data : new Uint8ClampedArray(source.data);
+  } else if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('Canvas 2D context unavailable');
+    ctx.drawImage(source as CanvasImageSource, 0, 0);
+    rgbaData = ctx.getImageData(0, 0, width, height).data;
+  } else {
+    throw new Error('Unsupported source type passed to preprocessForOCR');
+  }
 
   // Gaussian adaptive thresholding & local sliding-window intensity averaging configuration
   const preOpts: PreprocessOptions = {

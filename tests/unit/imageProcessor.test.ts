@@ -7,7 +7,6 @@ describe('Image Processor Service Utility - preprocessForOCR', () => {
     const h = 80;
     const rgba = new Uint8ClampedArray(w * h * 4).fill(255);
 
-    // Draw dark handwritten line strokes
     for (let y = 35; y < 45; y++) {
       for (let x = 15; x < 85; x++) {
         const idx = (y * w + x) * 4;
@@ -36,5 +35,18 @@ describe('Image Processor Service Utility - preprocessForOCR', () => {
     expect(result.height).toBe(h);
     expect(result.data).toBeDefined();
     expect(result.data.length).toBe(w * h * 4);
+  });
+
+  it('processes ImageData directly and returns enhanced ImageData', () => {
+    const w = 60;
+    const h = 50;
+    const data = new Uint8ClampedArray(w * h * 4).fill(255);
+    const imgData = { width: w, height: h, data };
+
+    const result = preprocessForOCR(imgData as ImageData);
+    expect(result).toBeDefined();
+    expect(result.width).toBe(w);
+    expect(result.height).toBe(h);
+    expect(result.data).toBeDefined();
   });
 });

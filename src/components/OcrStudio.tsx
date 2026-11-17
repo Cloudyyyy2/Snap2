@@ -18,6 +18,8 @@ import { CameraCapture } from './CameraCapture';
 import { InteractiveQuadCropper } from './InteractiveQuadCropper';
 import { Reminder, Category, Priority, ChecklistItem, DetectedStyle } from '../types';
 import { detectWordsOnImage, DetectedWordSquare } from '../lib/ocr/onDeviceWordDetector';
+import { decodeWordContextually } from '../lib/ocr/handwriting/dictionaryDecoder';
+import { preprocessForOCR } from '../services/imageProcessor';
 
 export interface RecentScanItem {
   id: string;
@@ -218,6 +220,43 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
     []
   );
 
+  const processImageWithAdaptiveThresholding = useCallback(async (dataUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          const enhancedImageData = preprocessForOCR(canvas);
+
+          const outCanvas = document.createElement('canvas');
+          outCanvas.width = enhancedImageData.width;
+          outCanvas.height = enhancedImageData.height;
+          const outCtx = outCanvas.getContext('2d');
+          if (!outCtx) {
+            resolve(dataUrl);
+            return;
+          }
+          outCtx.putImageData(enhancedImageData, 0, 0);
+          resolve(outCanvas.toDataURL('image/jpeg', 0.94));
+        } catch (err) {
+          console.warn('preprocessForOCR fallback:', err);
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  }, []);
+
   const runExtractionPipeline = useCallback(
     async (image: string, options?: { forceVision?: boolean }) => {
       setSourceImage(image);
@@ -236,6 +275,10 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
         .catch(() => setDetectedWords([]));
 
       try {
+        setStatusStep('Normalizing contrast with Gaussian adaptive thresholding...');
+        const enhancedImage = await processImageWithAdaptiveThresholding(image);
+        setProcessedImage(enhancedImage);
+
         const canRunLocal =
           !options?.forceVision && (localModelReady !== false || printedModelReady !== false);
 
@@ -246,7 +289,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              image,
+              image: enhancedImage,
               ocrProfile: 'auto',
               exportStages: true,
             }),
@@ -272,7 +315,24 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                   ? `Auto · Printed (${printedName})`
                   : `Auto · Handwriting (${hwName})`;
 
-            setEditableText(localData.text || '');
+            const rawText = localData.text || '';
+            const correctedText = rawText
+              .split('\n')
+              .map((line: string) =>
+                line
+                  .split(/\s+/)
+                  .map((word: string) => {
+                    if (word.length >= 3) {
+                      const corrected = decodeWordContextually(word);
+                      return corrected.isDictionaryMatch ? corrected.correctedWord : word;
+                    }
+                    return word;
+                  })
+                  .join(' ')
+              )
+              .join('\n');
+
+            setEditableText(correctedText || rawText);
             setScanMeta({
               linesCount,
               detectedStyle: localData.detectedStyle || 'handwriting',
@@ -303,7 +363,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            image,
+            image: enhancedImage,
             prompt: promptText.trim() || undefined,
             ocrProfile: 'auto',
           }),
