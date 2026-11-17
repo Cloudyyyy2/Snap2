@@ -5,6 +5,13 @@ import { createRequire } from 'module';
 import type webpushType from 'web-push';
 import dotenv from 'dotenv';
 import path from 'path';
+import {
+  processImageWithLocalOcr,
+  decodeBase64Image,
+  isHandwritingModelAvailable,
+  OcrProfile,
+} from './server/handwritingRecognizer';
+import { parseReminderLocally } from './server/localReminderParser';
 
 const require = createRequire(import.meta.url);
 const webpush = require('web-push') as typeof webpushType;
@@ -64,6 +71,50 @@ app.get('/api/config', (_req, res) => {
     groqConfigured: Boolean(process.env.GROQ_API_KEY),
     pushConfigured,
   });
+});
+
+app.get('/api/local-ocr/status', (_req, res) => {
+  res.json({
+    handwritingModel: isHandwritingModelAvailable() ? 'ready' : 'missing',
+    modelId: 'trocr-small-handwritten',
+    groqConfigured: Boolean(process.env.GROQ_API_KEY),
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+  });
+});
+
+app.post('/api/local-ocr', async (req, res) => {
+  try {
+    const { image, ocrProfile, exportStages } = req.body || {};
+    if (!image || typeof image !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide a base64 image for local OCR.',
+      });
+    }
+
+    const validProfile: OcrProfile =
+      ocrProfile === 'printed' || ocrProfile === 'handwriting' || ocrProfile === 'auto'
+        ? ocrProfile
+        : 'auto';
+
+    const imageBuffer = decodeBase64Image(image);
+    const result = await processImageWithLocalOcr({
+      imageBuffer,
+      ocrProfile: validProfile,
+      exportStages: exportStages !== false,
+    });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error: any) {
+    console.error('Error running local OCR:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to process image with local OCR.',
+    });
+  }
 });
 
 async function extractWithGroq(image: string | null, instructionText: string) {
@@ -213,20 +264,28 @@ async function generateWithGeminiRetry(parts: Array<Record<string, unknown>>) {
 
 app.post('/api/extract-reminder', async (req, res) => {
   try {
-    const { image, prompt } = req.body || {};
+    const { image, prompt, ocrProfile, ocrText } = req.body || {};
+    const verifiedOcrText = typeof ocrText === 'string' ? ocrText.trim() : '';
 
-    if (!image && (!prompt || typeof prompt !== 'string' || !prompt.trim())) {
+    if (!image && !verifiedOcrText && (!prompt || typeof prompt !== 'string' || !prompt.trim())) {
       return res.status(400).json({
         success: false,
-        error: 'Please provide an image or prompt to extract reminder details.',
+        error: 'Please provide an image, OCR text, or prompt to extract reminder details.',
       });
     }
 
-    const textPrompt =
-      prompt ||
-      'Analyze this image (screenshot, flyer, bill, receipt, note, ticket, etc.) and extract reminder details.';
     const nowISO = new Date(Date.now() + 86400000).toISOString();
-    const instructionText = `${textPrompt}
+    const basePrompt =
+      prompt ||
+      (verifiedOcrText
+        ? 'Convert this extracted note text into a structured reminder.'
+        : 'Analyze this image (screenshot, flyer, bill, receipt, note, ticket, etc.) and extract reminder details.');
+
+    const textWithOcr = verifiedOcrText
+      ? `${basePrompt}\n\nExtracted text from note/image:\n"""\n${verifiedOcrText}\n"""`
+      : basePrompt;
+
+    const instructionText = `${textWithOcr}
 Current time reference: ${new Date().toISOString()}.
 Default dueDate if none is found in the content: ${nowISO}.
 Extract clear, actionable reminder details as JSON.
@@ -234,61 +293,102 @@ Extract clear, actionable reminder details as JSON.
 - priority must be one of: "high", "medium", "low".
 - dueDate must be a valid ISO-8601 date-time string.`;
 
-    // Prefer Groq Vision LLM when configured, with Gemini fallback
+    // If user verified local TrOCR text, structure via text-only AI (no need to re-send image) or fall back to offline parser
+    const imageForVision = verifiedOcrText ? null : (image || null);
+
+    // Prefer Groq Vision/Text LLM when configured, with Gemini fallback
     if (process.env.GROQ_API_KEY) {
       try {
-        const groqResult = await extractWithGroq(image || null, instructionText);
+        const groqResult = await extractWithGroq(imageForVision, instructionText);
         if (groqResult) {
-          return res.json({ success: true, provider: 'groq', data: groqResult });
+          return res.json({
+            success: true,
+            provider: 'groq',
+            ocrProfile: ocrProfile || 'auto',
+            data: groqResult,
+          });
         }
       } catch (groqErr: any) {
-        console.warn('Groq extraction failed, falling back to Gemini if available:', groqErr?.message);
-        if (!process.env.GEMINI_API_KEY) {
-          throw groqErr;
-        }
+        console.warn('Groq extraction failed, trying Gemini/local fallback:', groqErr?.message);
       }
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: 'No AI provider key is configured (GROQ_API_KEY or GEMINI_API_KEY).',
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        let imagePart: { inlineData: { mimeType: string; data: string } } | null = null;
+        if (imageForVision && typeof imageForVision === 'string') {
+          const matches = imageForVision.match(/^data:(.+);base64,(.+)$/);
+          if (matches) {
+            imagePart = {
+              inlineData: {
+                mimeType: matches[1],
+                data: matches[2],
+              },
+            };
+          } else {
+            imagePart = {
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: imageForVision,
+              },
+            };
+          }
+        }
+
+        const parts = [
+          ...(imagePart ? [imagePart] : []),
+          { text: instructionText },
+        ];
+
+        const response = await generateWithGeminiRetry(parts);
+        const resultText = response.text;
+        if (resultText) {
+          const parsedData = JSON.parse(resultText);
+          return res.json({
+            success: true,
+            provider: 'gemini',
+            ocrProfile: ocrProfile || 'auto',
+            data: parsedData,
+          });
+        }
+      } catch (geminiErr: any) {
+        console.warn('Gemini extraction failed, checking local fallback:', geminiErr?.message);
+      }
+    }
+
+    // Offline / local deterministic fallback when OCR text is available or local TrOCR can read the image
+    let localText = verifiedOcrText;
+    let usedLocalOcr = false;
+
+    if (!localText && image && typeof image === 'string' && isHandwritingModelAvailable()) {
+      const localRes = await processImageWithLocalOcr({
+        imageBuffer: decodeBase64Image(image),
+        ocrProfile: ocrProfile === 'printed' ? 'handwriting' : (ocrProfile || 'handwriting'),
+        exportStages: true,
+      });
+      localText = localRes.text;
+      usedLocalOcr = true;
+    }
+
+    if (localText || (prompt && typeof prompt === 'string' && prompt.trim())) {
+      const parsed = parseReminderLocally(
+        localText || prompt.trim(),
+        localText ? prompt : undefined,
+        usedLocalOcr || ocrProfile === 'handwriting' ? ['handwritten'] : ['note']
+      );
+      return res.json({
+        success: true,
+        provider: 'local-parser',
+        ocrProfile: ocrProfile || 'auto',
+        ocrText: localText,
+        data: parsed,
       });
     }
 
-    let imagePart: { inlineData: { mimeType: string; data: string } } | null = null;
-    if (image && typeof image === 'string') {
-      const matches = image.match(/^data:(.+);base64,(.+)$/);
-      if (matches) {
-        imagePart = {
-          inlineData: {
-            mimeType: matches[1],
-            data: matches[2],
-          },
-        };
-      } else {
-        imagePart = {
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: image,
-          },
-        };
-      }
-    }
-
-    const parts = [
-      ...(imagePart ? [imagePart] : []),
-      { text: instructionText },
-    ];
-
-    const response = await generateWithGeminiRetry(parts);
-    const resultText = response.text;
-    if (!resultText) {
-      throw new Error('No response received from Gemini AI');
-    }
-
-    const parsedData = JSON.parse(resultText);
-    res.json({ success: true, provider: 'gemini', data: parsedData });
+    return res.status(500).json({
+      success: false,
+      error: 'No AI provider succeeded and no readable local text was extracted.',
+    });
   } catch (error: any) {
     console.error('Error extracting reminder:', error);
     const status = typeof error?.status === 'number' ? error.status : 500;
