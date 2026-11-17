@@ -455,23 +455,29 @@ export async function processImageWithLocalOcr(params: {
     k: 0.16,
   });
 
-  // Stage 4b (Pass 1) + Stage 2b: Ruled-Line Cleanup & Projection Deskewing
-  let noRules = removeRuledLines(workGray, w, h);
-  let sp = getSauvolaParams(w, h);
-  let binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
-  let cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
+  // Step 1: Initial fast binarization to capture slant angle from ruling lines and text baselines
+  const spInit = getSauvolaParams(w, h);
+  const rawBinaryForDeskew = binarizeSauvola(workGray, w, h, spInit.radius, spInit.k);
 
-  const deskew = deskewGrayscale(workGray, cleanBinary, w, h, { minCorrectionDeg: 0.6 });
+  // Step 2: Deskew BEFORE ruled-line removal so tilted ruling lines become horizontal (up to ±28°)
+  const deskew = deskewGrayscale(workGray, rawBinaryForDeskew, w, h, {
+    minCorrectionDeg: 0.4,
+    maxAngleDeg: 28,
+  });
   const skewAngle = deskew.angleDeg;
   if (deskew.corrected) {
     workGray = deskew.data;
-    noRules = removeRuledLines(deskew.data, w, h);
-    sp = getSauvolaParams(w, h);
-    binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
-    cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
     appliedSteps.push(`deskew(${skewAngle}deg)`);
   }
+
+  // Step 3: Ruled-line removal on the leveled horizontal paper sheet
+  let noRules = removeRuledLines(workGray, w, h);
   appliedSteps.push('ruled-lines-removed');
+
+  // Step 4: Re-binarize on the leveled, rule-free paper
+  let sp = getSauvolaParams(w, h);
+  let binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
+  let cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
 
   const workGrayW = w;
   const workGrayH = h;
@@ -500,9 +506,71 @@ export async function processImageWithLocalOcr(params: {
 
   // Stage 3b: Two-Pass Multi-Scale Contour Consensus Voting
   const contourVote = twoPassContourVoting(noRules, w, h);
-  const blendedBinary = contourVote.binary;
-  const regionBinary =
+  let blendedBinary = contourVote.binary;
+  let regionBinary =
     w >= 280 && h >= 200 ? filterTextComponents(blendedBinary, w, h) : blendedBinary;
+
+  // Stage 3c: Text Bounding Box Auto-Shrink (trims dead empty margins, e.g. 75% empty ruled paper below note)
+  let textMinX = w;
+  let textMaxX = 0;
+  let textMinY = h;
+  let textMaxY = 0;
+  let validTextPixels = 0;
+
+  for (let y = 0; y < h; y++) {
+    const rowOff = y * w;
+    for (let x = 0; x < w; x++) {
+      if (regionBinary[rowOff + x] === 0) {
+        validTextPixels++;
+        if (x < textMinX) textMinX = x;
+        if (x > textMaxX) textMaxX = x;
+        if (y < textMinY) textMinY = y;
+        if (y > textMaxY) textMaxY = y;
+      }
+    }
+  }
+
+  // If text cluster is localized and surrounded by large empty margin (> 25% empty height or width):
+  if (validTextPixels >= 25 && textMaxX > textMinX + 15 && textMaxY > textMinY + 10) {
+    const textSpanY = textMaxY - textMinY;
+    const textSpanX = textMaxX - textMinX;
+
+    if (textSpanY < h * 0.75 || textSpanX < w * 0.82) {
+      const padX = Math.max(32, Math.round(textSpanX * 0.14));
+      const padY = Math.max(26, Math.round(textSpanY * 0.16));
+
+      const cropX0 = Math.max(0, textMinX - padX);
+      const cropY0 = Math.max(0, textMinY - padY);
+      const cropX1 = Math.min(w - 1, textMaxX + padX);
+      const cropY1 = Math.min(h - 1, textMaxY + padY);
+
+      const trimmedW = cropX1 - cropX0 + 1;
+      const trimmedH = cropY1 - cropY0 + 1;
+
+      if (trimmedW >= 80 && trimmedH >= 40 && (trimmedW < w * 0.95 || trimmedH < h * 0.95)) {
+        const cropBuf = (src: Uint8ClampedArray): Uint8ClampedArray => {
+          const out = new Uint8ClampedArray(trimmedW * trimmedH).fill(255);
+          for (let cy = cropY0; cy <= cropY1; cy++) {
+            const srcOff = cy * w;
+            const dstOff = (cy - cropY0) * trimmedW;
+            for (let cx = cropX0; cx <= cropX1; cx++) {
+              out[dstOff + (cx - cropX0)] = src[srcOff + cx];
+            }
+          }
+          return out;
+        };
+
+        workGray = cropBuf(workGray);
+        noRules = cropBuf(noRules);
+        blendedBinary = cropBuf(blendedBinary);
+        regionBinary = cropBuf(regionBinary);
+        cleanBinary = cropBuf(cleanBinary);
+        w = trimmedW;
+        h = trimmedH;
+        appliedSteps.push(`auto-bbox-shrink(${w}x${h})`);
+      }
+    }
+  }
 
   // Morphological closing bridges broken faint pencil/pen strokes for line segmentation
   const closedForSeg = applyMorphologicalOp(regionBinary, w, h, 'close', 1);

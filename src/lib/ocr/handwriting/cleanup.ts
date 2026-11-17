@@ -129,18 +129,19 @@ export function removeRuledLines(
       }
     }
 
-    if (covered / w >= 0.55 && maxRun >= w * 0.3 && lineSamples.length > 0) {
+    if (covered / w >= 0.35 && maxRun >= w * 0.20 && lineSamples.length > 0) {
       lineSamples.sort((a, b) => a - b);
       const med = lineSamples[Math.floor(lineSamples.length * 0.5)];
       // Ruled lines are typically mid/light gray/blue (not solid black ink block)
-      if (med >= 55 && med <= paper - 10) {
+      if (med >= 45 && med <= paper - 8) {
         candidateRow[y] = 1;
         rowMedian[y] = med;
       }
     }
   }
 
-  // Group contiguous candidate rows; ruled lines have thickness <= 4 px
+  // Group contiguous candidate rows; ruled lines have thickness <= 6 px (scaled to width)
+  const maxAllowedThickness = Math.max(5, Math.round(w / 280));
   let y = 0;
   while (y < h) {
     if (!candidateRow[y]) {
@@ -154,21 +155,27 @@ export function removeRuledLines(
     }
     const thickness = y - startY;
 
-    if (thickness <= 4) {
+    if (thickness <= maxAllowedThickness) {
       // Estimate surrounding non-line paper brightness above/below the band
       const aboveY = Math.max(0, startY - 2);
       const belowY = Math.min(h - 1, y + 1);
 
       for (let ry = startY; ry < y; ry++) {
         const lineTone = rowMedian[ry];
+        const paper = rowPaper[ry];
         const rowOffset = ry * w;
         for (let x = 0; x < w; x++) {
           const cur = out[rowOffset + x];
           const surround = Math.round((gray[aboveY * w + x] + gray[belowY * w + x]) / 2);
-          // Keep crossing ink strokes that are noticeably darker than the ruled line
-          const isCrossingInk = cur < lineTone - 24;
-          if (!isCrossingInk && cur <= surround - 6) {
-            out[rowOffset + x] = Math.max(cur, surround, rowPaper[ry]);
+
+          // Check if pixel belongs to a vertical handwriting stroke (graphite pencil or pen crossing the ruling)
+          const hasVerticalAbove = ry >= 3 && gray[(ry - 2) * w + x] < paper - 14;
+          const hasVerticalBelow = ry < h - 3 && gray[(ry + 2) * w + x] < paper - 14;
+          const isNoticeablyDarker = cur < lineTone - 14;
+          const isCrossingInk = isNoticeablyDarker || hasVerticalAbove || hasVerticalBelow;
+
+          if (!isCrossingInk && cur <= surround - 4) {
+            out[rowOffset + x] = Math.max(cur, surround, paper);
           }
         }
       }

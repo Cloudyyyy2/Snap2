@@ -1109,8 +1109,39 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             src={previewMode === 'processed' && processedImage ? processedImage : sourceImage}
             alt="Full scanned note preview"
             referrerPolicy="no-referrer"
-            className="max-w-full max-h-[82vh] object-contain rounded-xl bg-white"
+            className="max-w-full max-h-[68vh] object-contain rounded-xl bg-white shadow-2xl border border-zinc-800"
           />
+
+          {/* Extracted Text & Quality Metrics HUD inside Lightbox */}
+          {editableText.trim() && (
+            <div
+              className="w-full max-w-lg p-3 rounded-2xl bg-zinc-900/95 border border-zinc-700/80 text-zinc-100 backdrop-blur-md space-y-1.5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                <span className="font-semibold text-cyan-400 flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>OCR Recognized Text:</span>
+                </span>
+                <div className="flex items-center gap-1.5 font-mono">
+                  {scanMeta?.accuracyScore !== undefined && (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold text-[10px]">
+                      {scanMeta.accuracyScore}% confidence
+                    </span>
+                  )}
+                  {scanMeta?.skewAngle !== undefined && Math.abs(scanMeta.skewAngle) >= 0.5 && (
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px]">
+                      Leveled {Math.abs(scanMeta.skewAngle).toFixed(1)}°
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-sm font-medium text-white line-clamp-2 bg-zinc-950/60 p-2 rounded-xl border border-zinc-800 font-mono">
+                {editableText}
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

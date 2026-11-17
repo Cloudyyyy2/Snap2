@@ -646,7 +646,7 @@ export function estimateSkewAngle(
 ): number {
   if (w < 40 || h < 40) return 0;
 
-  const maxAngle = options.maxAngleDeg ?? 18;
+  const maxAngle = options.maxAngleDeg ?? 28;
   const coarseStep = options.coarseStepDeg ?? 0.5;
   const fineStep = options.fineStepDeg ?? 0.1;
 

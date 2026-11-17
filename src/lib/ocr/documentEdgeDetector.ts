@@ -5,9 +5,11 @@ import {
   detectDocumentQuad,
   warpPerspectiveRgba,
   estimateSkewAngle,
+  rotateGrayscale,
 } from './geometry';
 import { rgbaToGrayscale, binarizeSauvola, flattenDocumentLighting } from './preprocess';
 import { segmentLines, LineBox } from './handwriting/lines';
+import { removeRuledLines } from './handwriting/cleanup';
 
 export interface NormalizedPoint {
   x: number; // 0..1
@@ -457,7 +459,15 @@ export async function detectTextLinesAndHull(
   const workH = canvas.height;
   const imgData = ctx.getImageData(0, 0, workW, workH);
   const gray = rgbaToGrayscale(imgData.data, workW, workH);
-  const binary = binarizeSauvola(gray, workW, workH, 14, 0.22);
+  const rawBin = binarizeSauvola(gray, workW, workH, 14, 0.22);
+
+  // Measure tilt & level horizontal baselines
+  const angleDeg = estimateSkewAngle(rawBin, workW, workH, { maxAngleDeg: 28 });
+  const leveledGray = Math.abs(angleDeg) >= 0.6 ? rotateGrayscale(gray, workW, workH, angleDeg) : gray;
+
+  // Erase notebook ruling lines so empty lines aren't treated as text
+  const noRules = removeRuledLines(leveledGray, workW, workH);
+  const binary = binarizeSauvola(noRules, workW, workH, 14, 0.22);
 
   // Extract text line boxes
   const rawLines: LineBox[] = segmentLines(binary, workW, workH);
@@ -507,9 +517,9 @@ export async function detectTextLinesAndHull(
       if (l.y1 > maxY) maxY = l.y1;
     }
 
-    // Add 8% comfortable breathing margin around the text cluster
-    const padX = Math.round(origW * 0.08);
-    const padY = Math.round(origH * 0.08);
+    // Add 12% comfortable breathing margin around the text cluster (prevents cutting off the first letter)
+    const padX = Math.round(origW * 0.12);
+    const padY = Math.round(origH * 0.10);
 
     const x0 = Math.max(0, minX - padX);
     const y0 = Math.max(0, minY - padY);
