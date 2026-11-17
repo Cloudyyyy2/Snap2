@@ -394,10 +394,10 @@ Extract clear, actionable reminder details as JSON.
     let localText = verifiedOcrText;
     let usedLocalOcr = false;
 
-    if (!localText && image && typeof image === 'string' && isHandwritingModelAvailable()) {
+    if (!localText && image && typeof image === 'string' && (isHandwritingModelAvailable() || isPrintedModelAvailable())) {
       const localRes = await processImageWithLocalOcr({
         imageBuffer: decodeBase64Image(image),
-        ocrProfile: ocrProfile === 'printed' ? 'handwriting' : (ocrProfile || 'handwriting'),
+        ocrProfile: ocrProfile || 'auto',
         exportStages: true,
       });
       localText = localRes.text;

@@ -1,6 +1,7 @@
 export type Category = 'Bills' | 'Events' | 'Tasks' | 'Travel' | 'Work' | 'Personal' | 'Health';
 export type Priority = 'high' | 'medium' | 'low';
 export type OcrProfile = 'auto' | 'printed' | 'handwriting';
+export type DetectedStyle = 'printed' | 'handwriting' | 'mixed';
 
 export interface ChecklistItem {
   id: string;

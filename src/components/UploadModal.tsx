@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Upload, Camera, Loader2, RotateCcw, Sparkles } from 'lucide-react';
-import { Reminder } from '../types';
+import React, { useState, useEffect } from 'react';
+import { X, Camera, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Reminder, DetectedStyle } from '../types';
 import { CameraCapture } from './CameraCapture';
-
-export type OcrProfile = 'auto' | 'printed' | 'handwriting';
 
 interface UploadModalProps {
   onClose: () => void;
@@ -13,22 +11,8 @@ interface UploadModalProps {
 
 interface LocalOcrState {
   linesCount: number;
-  detectedStyle: 'printed' | 'handwriting';
+  detectedStyle: DetectedStyle;
   engineLabel: string;
-}
-
-const OCR_PROFILE_STORAGE_KEY = 'snapremind_ocr_profile';
-
-function getStoredProfile(): OcrProfile {
-  try {
-    const val = localStorage.getItem(OCR_PROFILE_STORAGE_KEY);
-    if (val === 'auto' || val === 'printed' || val === 'handwriting') {
-      return val;
-    }
-  } catch {
-    // ignore storage errors
-  }
-  return 'auto';
 }
 
 export const UploadModal: React.FC<UploadModalProps> = ({
@@ -39,16 +23,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [imagePreview, setImagePreview] = useState<string | null>(initialImage);
   const [imageBase64, setImageBase64] = useState<string | null>(initialImage);
   const [promptText, setPromptText] = useState('');
-  const [ocrProfile, setOcrProfile] = useState<OcrProfile>(() => getStoredProfile());
   const [localModelReady, setLocalModelReady] = useState<boolean | null>(null);
 
   const [ocrState, setOcrState] = useState<LocalOcrState | null>(null);
   const [editableText, setEditableText] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [statusStep, setStatusStep] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -56,7 +37,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (active && data) {
-          setLocalModelReady(data.handwritingModel === 'ready');
+          setLocalModelReady(
+            data.handwritingModel === 'ready' || data.printedModel === 'ready'
+          );
         }
       })
       .catch(() => {
@@ -66,15 +49,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       active = false;
     };
   }, []);
-
-  const handleProfileChange = (next: OcrProfile) => {
-    setOcrProfile(next);
-    try {
-      localStorage.setItem(OCR_PROFILE_STORAGE_KEY, next);
-    } catch {
-      // ignore storage errors
-    }
-  };
 
   const readFile = (file: File) => {
     const reader = new FileReader();
@@ -89,18 +63,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) readFile(file);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) readFile(file);
-  };
-
-  const finalizeReminderFromApi = (data: any, engineTag?: string) => {
+  const finalizeReminderFromApi = (data: any, styleTag?: string) => {
     const parsed = data.data || {};
     const validCategories = ['Bills', 'Events', 'Tasks', 'Travel', 'Work', 'Personal', 'Health'];
     const validPriorities = ['high', 'medium', 'low'];
@@ -114,7 +77,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         : new Date(Date.now() + 86400000).toISOString();
 
     const baseTags = Array.isArray(parsed.tags) ? parsed.tags : ['screenshot'];
-    const tags = engineTag && !baseTags.includes(engineTag) ? [...baseTags, engineTag] : baseTags;
+    const tags = styleTag && !baseTags.includes(styleTag) ? [...baseTags, styleTag] : baseTags;
 
     const newReminder: Reminder = {
       id: `rem-${Date.now()}`,
@@ -134,6 +97,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         : [],
       tags,
       image: imageBase64 || undefined,
+      ocrText: editableText.trim() || undefined,
+      ocrEngine: ocrState?.engineLabel,
       completed: false,
       starred: false,
       createdAt: new Date().toISOString(),
@@ -143,20 +108,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     onClose();
   };
 
-  const runHandwritingOcr = async (forceHandwriting: boolean): Promise<boolean> => {
+  const runAutoLocalOcr = async (): Promise<boolean> => {
     if (!imageBase64) return false;
-    const targetProfile: OcrProfile = forceHandwriting ? 'handwriting' : ocrProfile;
-    if (forceHandwriting && ocrProfile !== 'handwriting') {
-      handleProfileChange('handwriting');
-    }
 
-    setStatusStep('Reading handwriting locally...');
+    setStatusStep('Auto-detecting printed & handwritten text offline...');
     const res = await fetch('/api/local-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         image: imageBase64,
-        ocrProfile: targetProfile,
+        ocrProfile: 'auto',
         exportStages: true,
       }),
     });
@@ -166,17 +127,24 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       throw new Error(data.error || `Local OCR failed (HTTP ${res.status})`);
     }
 
-    if (data.recognizer === 'trocr-host') {
+    if (data.recognizer !== 'vision-fallback') {
       const linesCount = Array.isArray(data.lines) ? data.lines.length : 0;
+      const engineLabel =
+        data.recognizer === 'hybrid-host'
+          ? 'Auto · Mixed (Offline)'
+          : data.recognizer === 'tesseract-host'
+            ? 'Auto · Printed (Offline)'
+            : 'Auto · Handwriting (Offline)';
+
       setEditableText(data.text || '');
       setOcrState({
         linesCount,
         detectedStyle: data.detectedStyle || 'handwriting',
-        engineLabel: 'Handwriting · TrOCR (Local)',
+        engineLabel,
       });
       if (!data.text) {
         setErrorMsg(
-          'No clear handwriting lines were recognized. Edit the note text below or switch to Vision AI.'
+          'No clear text lines were recognized offline. Edit the text below, tap Re-scan, or switch to Vision AI.'
         );
       }
       return true;
@@ -193,7 +161,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       body: JSON.stringify({
         image: forceVisionImage ? imageBase64 : overrideOcrText !== undefined ? undefined : imageBase64,
         prompt: promptText.trim() || undefined,
-        ocrProfile,
+        ocrProfile: 'auto',
         ocrText: overrideOcrText,
       }),
     });
@@ -207,12 +175,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       throw new Error(data.error || `Failed to extract reminder (HTTP ${res.status})`);
     }
 
-    finalizeReminderFromApi(data, ocrState ? 'handwritten' : undefined);
+    const tag =
+      ocrState?.detectedStyle === 'handwriting' || ocrState?.detectedStyle === 'mixed'
+        ? 'handwritten'
+        : undefined;
+    finalizeReminderFromApi(data, tag);
   };
 
   const handlePrimaryAction = async () => {
     if (!imageBase64 && !promptText.trim() && !editableText.trim()) {
-      setErrorMsg('Upload a note or screenshot, or enter details to extract.');
+      setErrorMsg('Capture or upload a note or enter details to extract.');
       return;
     }
 
@@ -220,7 +192,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setErrorMsg(null);
 
     try {
-      // Step 2: User already reviewed/edited local handwriting OCR text -> create reminder
       if (ocrState !== null) {
         if (!editableText.trim() && !promptText.trim()) {
           setErrorMsg('Please enter or edit the note text before creating a reminder.');
@@ -232,20 +203,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         return;
       }
 
-      // Step 1: When image is present and profile may use local handwriting TrOCR
-      const shouldTryLocal =
-        Boolean(imageBase64) &&
-        localModelReady !== false &&
-        (ocrProfile === 'handwriting' || ocrProfile === 'auto');
-
-      if (shouldTryLocal) {
-        const handledByLocal = await runHandwritingOcr(ocrProfile === 'handwriting');
+      if (imageBase64 && localModelReady !== false) {
+        const handledByLocal = await runAutoLocalOcr();
         if (handledByLocal) {
           return;
         }
       }
 
-      // Otherwise use Vision AI / prompt structuring directly
       await extractViaServer(undefined, true);
     } catch (err: any) {
       console.error(err);
@@ -256,18 +220,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
-  const handleRereadAsHandwriting = async () => {
+  const handleRescanAuto = async () => {
     if (!imageBase64) return;
     setIsExtracting(true);
     setErrorMsg(null);
     try {
-      const handled = await runHandwritingOcr(true);
+      const handled = await runAutoLocalOcr();
       if (!handled) {
-        setErrorMsg('Local handwriting model is unavailable; using Vision AI instead.');
+        setErrorMsg('Offline OCR models are unavailable; using Vision AI instead.');
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || 'Could not re-read image as handwriting.');
+      setErrorMsg(err.message || 'Could not re-scan image.');
     } finally {
       setIsExtracting(false);
       setStatusStep('');
@@ -308,7 +272,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 Scan Note or Screenshot
               </h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                Read cursive handwriting locally or extract printed screenshots
+                Auto-detects printed, handwritten, and mixed pages offline
               </p>
             </div>
           </div>
@@ -328,56 +292,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
-          {/* 3-Way OCR Mode Segmented Control */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1 p-1 bg-zinc-100 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 rounded-lg">
-              {(
-                [
-                  { id: 'auto', label: 'Auto' },
-                  { id: 'printed', label: 'Printed' },
-                  { id: 'handwriting', label: 'Handwriting' },
-                ] as const
-              ).map((mode) => {
-                const active = ocrProfile === mode.id;
-                return (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    onClick={() => handleProfileChange(mode.id)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                      active
-                        ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                        : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <span className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-              {localModelReady === true
-                ? 'Local TrOCR ready'
-                : localModelReady === false
-                  ? 'Vision AI fallback'
-                  : 'Checking local OCR...'}
-            </span>
-          </div>
-
-          {isCameraOpen ? (
-            <CameraCapture
-              onCapture={(dataUrl) => {
-                setImagePreview(dataUrl);
-                setImageBase64(dataUrl);
-                setIsCameraOpen(false);
-                setOcrState(null);
-                setEditableText('');
-                setErrorMsg(null);
-              }}
-              onClose={() => setIsCameraOpen(false)}
-            />
-          ) : imagePreview ? (
+          {imagePreview ? (
             <div className="relative rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 h-48 flex items-center justify-center">
               <img
                 src={imagePreview}
@@ -396,70 +311,32 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 }}
                 className="absolute top-2.5 right-2.5 bg-white/95 dark:bg-zinc-900/95 text-zinc-700 dark:text-zinc-200 px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 hover:text-rose-600 text-xs font-medium inline-flex items-center gap-1 shadow-sm"
               >
-                <X className="w-3.5 h-3.5" /> Remove
+                <X className="w-3.5 h-3.5" /> Retake
               </button>
             </div>
           ) : (
-            <div className="space-y-2.5">
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleDrop}
-                className="border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-indigo-500 dark:hover:border-indigo-500 rounded-xl p-7 text-center bg-zinc-50/70 dark:bg-zinc-950/50 transition-colors cursor-pointer flex flex-col items-center justify-center gap-2.5 relative"
-              >
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileChange}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-                <div className="w-10 h-10 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center">
-                  <Upload className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Drop a note or screenshot here or{' '}
-                    <span className="text-indigo-600 dark:text-indigo-400">browse</span>
-                  </p>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    Handwritten lists, lined notebook pages, bills, receipts, or tickets
-                  </p>
-                </div>
-              </div>
-
-              <input
-                ref={nativeCameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setErrorMsg(null);
-                    setIsCameraOpen(true);
-                  }}
-                  className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 text-xs font-medium text-zinc-800 dark:text-zinc-200 inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
-                >
-                  <Camera className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                  <span>Open Live Camera</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => nativeCameraInputRef.current?.click()}
-                  className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
-                >
-                  <Camera className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />
-                  <span>Device Camera</span>
-                </button>
-              </div>
-            </div>
+            <CameraCapture
+              embedded
+              paused={isExtracting}
+              onCapture={(dataUrl) => {
+                setImagePreview(dataUrl);
+                setImageBase64(dataUrl);
+                setOcrState(null);
+                setEditableText('');
+                setErrorMsg(null);
+              }}
+              onUploadFile={readFile}
+              statusNote={
+                localModelReady === true
+                  ? 'Offline auto-OCR ready'
+                  : localModelReady === false
+                    ? 'Vision AI fallback'
+                    : 'Checking offline OCR...'
+              }
+            />
           )}
 
-          {/* Editable OCR Text Review (shown after local TrOCR pass) */}
+          {/* Editable OCR Text Review (shown after local OCR pass) */}
           {ocrState && (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
@@ -475,18 +352,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 rows={4}
                 value={editableText}
                 onChange={(e) => setEditableText(e.target.value)}
-                placeholder="Review or edit recognized handwriting..."
+                placeholder="Review or edit recognized text..."
                 className="w-full p-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-indigo-500 leading-relaxed"
               />
               <div className="flex items-center justify-between gap-2 pt-0.5">
                 <button
                   type="button"
                   disabled={isExtracting}
-                  onClick={handleRereadAsHandwriting}
+                  onClick={handleRescanAuto}
                   className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 inline-flex items-center gap-1 whitespace-nowrap"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  <span>Re-read as handwriting</span>
+                  <span>Re-scan offline</span>
                 </button>
                 <button
                   type="button"
@@ -521,11 +398,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <button
                 type="button"
                 disabled={isExtracting}
-                onClick={handleRereadAsHandwriting}
+                onClick={handleRescanAuto}
                 className="px-2.5 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-zinc-200/50 dark:hover:bg-zinc-800 rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Re-read as handwriting</span>
+                <span>Re-scan</span>
               </button>
             )}
           </div>

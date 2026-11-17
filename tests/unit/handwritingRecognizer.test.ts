@@ -116,4 +116,46 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
     expect(parsed.tags).toContain('handwritten');
     expect(new Date(parsed.dueDate).getHours()).toBe(15);
   });
+
+  it(
+    'handles blank/empty frames safely and auto-detects mixed printed + handwritten regions offline',
+    async () => {
+      // 1. Blank white image edge case
+      const blankSvg = `<svg width="400" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="200" fill="white" /></svg>`;
+      const blankPng = await sharp(Buffer.from(blankSvg)).png().toBuffer();
+      const blankRes = await processImageWithLocalOcr({
+        imageBuffer: blankPng,
+        ocrProfile: 'auto',
+        exportStages: false,
+      });
+      expect(blankRes.text).toBe('');
+      expect(blankRes.lines.length).toBe(0);
+      expect(blankRes.qualityScore).toBe(0);
+      expect(blankRes.appliedSteps).toContain('no-ink-detected');
+
+      // 2. Mixed printed header region + connected cursive-like handwriting path region separated vertically
+      const mixedSvg = `
+        <svg width="640" height="360" xmlns="http://www.w3.org/2000/svg">
+          <rect width="640" height="360" fill="white" />
+          <text x="48" y="68" font-size="34" font-family="sans-serif" fill="#111827">PAY ELECTRIC BILL</text>
+          <path d="M52 248 C70 212, 92 260, 114 226 C132 204, 152 256, 178 228 C196 212, 224 252, 248 222 C270 202, 292 254, 326 226 C348 210, 376 250, 412 224" fill="none" stroke="#18181b" stroke-width="5" stroke-linecap="round" />
+          <path d="M446 232 C464 214, 488 250, 518 222 C540 204, 560 250, 588 228" fill="none" stroke="#18181b" stroke-width="4.5" stroke-linecap="round" />
+        </svg>
+      `;
+      const mixedPng = await sharp(Buffer.from(mixedSvg)).png().toBuffer();
+      const mixedRes = await processImageWithLocalOcr({
+        imageBuffer: mixedPng,
+        ocrProfile: 'auto',
+        exportStages: false,
+      });
+
+      expect(mixedRes.regionsCount).toBeGreaterThanOrEqual(2);
+      expect(mixedRes.text.toLowerCase()).toContain('pay electric bill');
+      expect(['mixed', 'printed', 'handwriting']).toContain(mixedRes.detectedStyle);
+      if (mixedRes.detectedStyle === 'mixed') {
+        expect(mixedRes.recognizer).toBe('hybrid-host');
+      }
+    },
+    45000
+  );
 });

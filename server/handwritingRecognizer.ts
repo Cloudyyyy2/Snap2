@@ -43,6 +43,8 @@ import { getCompactLexicon } from '../src/lib/ocr/compactLexicon';
 import { isPrintedModelAvailable, recognizePrintedBuffer } from './printedRecognizer';
 
 export type OcrProfile = 'auto' | 'printed' | 'handwriting';
+export type DetectedStyle = 'printed' | 'handwriting' | 'mixed';
+export type RecognizerEngine = 'trocr-host' | 'tesseract-host' | 'hybrid-host' | 'vision-fallback';
 
 export interface LocalOcrLineResult {
   text: string;
@@ -54,9 +56,9 @@ export interface LocalOcrResponse {
   text: string;
   lines: LocalOcrLineResult[];
   profile: OcrProfile;
-  detectedStyle: 'printed' | 'handwriting';
+  detectedStyle: DetectedStyle;
   detection: HandwritingDetectionResult;
-  recognizer: 'trocr-host' | 'tesseract-host' | 'vision-fallback';
+  recognizer: RecognizerEngine;
   qualityScore: number;
   skewAngle?: number;
   darkInverted?: boolean;
@@ -180,8 +182,45 @@ function scoreRecognizedLine(text: string): number {
   return Number(Math.min(0.92, 0.52 + lexRatio * 0.4).toFixed(2));
 }
 
+function scoreTextPlausibility(text: string, qualityScore: number): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+
+  const rawTokens = trimmed.split(/\s+/).filter(Boolean);
+  if (rawTokens.length === 0) return 0;
+
+  const lexicon = getCompactLexicon();
+  let lexiconOrNumericHits = 0;
+  let alphaNumericTokens = 0;
+  let weirdSymbolTokens = 0;
+
+  for (const rawTok of rawTokens) {
+    const cleaned = rawTok.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+    if (!cleaned) {
+      weirdSymbolTokens++;
+      continue;
+    }
+    alphaNumericTokens++;
+    if (
+      lexicon.has(cleaned) ||
+      /^\d+(?:[.,:/-]\d+)*(?:am|pm|k|m)?$/.test(cleaned) ||
+      (/^[a-z]{3,}$/.test(cleaned) && /[aeiouy]/.test(cleaned))
+    ) {
+      lexiconOrNumericHits++;
+    }
+  }
+
+  if (alphaNumericTokens === 0) return 0.05;
+
+  const lexRatio = lexiconOrNumericHits / rawTokens.length;
+  const cleanRatio = Math.max(0, 1 - weirdSymbolTokens / rawTokens.length);
+  const clampedQuality = Math.max(0, Math.min(1, qualityScore));
+
+  return Number((clampedQuality * 0.5 + lexRatio * 0.35 + cleanRatio * 0.15).toFixed(3));
+}
+
 /**
- * Runs TrOCR-small-handwritten sequentially line-by-line (chunking ultra-wide lines
+ * Runs TrOCR-base-handwritten sequentially line-by-line (chunking ultra-wide lines
  * cleanly so 384x384 input resizing never squashes words beyond recognition).
  */
 export async function recognizeLines(
@@ -268,13 +307,43 @@ function cropRegionWithPadding(
   return { data: out, width: rw, height: rh };
 }
 
+function maskBinaryOutsideBox(
+  binary: Uint8ClampedArray,
+  w: number,
+  h: number,
+  box: { x0: number; y0: number; x1: number; y1: number }
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h).fill(255);
+  const y0 = Math.max(0, box.y0);
+  const y1 = Math.min(h - 1, box.y1);
+  const x0 = Math.max(0, box.x0);
+  const x1 = Math.min(w - 1, box.x1);
+  for (let y = y0; y <= y1; y++) {
+    const rowOff = y * w;
+    for (let x = x0; x <= x1; x++) {
+      out[rowOff + x] = binary[rowOff + x];
+    }
+  }
+  return out;
+}
+
+function verticalOverlapRatio(
+  a: { y0: number; y1: number },
+  b: { y0: number; y1: number }
+): number {
+  const inter = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  if (inter <= 0) return 0;
+  const minH = Math.max(1, Math.min(a.y1 - a.y0, b.y1 - b.y0));
+  return inter / minH;
+}
+
 /**
  * Full 4-Stage Offline Image Processing + Dual Recognition Pipeline:
  * 1. Luminance & Contrast Normalization (grayscale collapse, polarity inversion, Retinex flattening, Otsu/Sauvola)
  * 2. Geometric & Spatial Correction (perspective quad dewarping, deskewing, 300+ DPI scaling)
  * 3. Noise Removal & Edge Preservation (3x3 median, bilateral smoothing, border cropping, morphological ops)
  * 4. Layout & Region Segmentation (XY-cut text regions, ruled-line removal, line/word segmentation)
- * -> Dual Offline Recognizers (Tesseract LSTM for printed, TrOCR for handwriting)
+ * -> Dual Offline Recognizers (Tesseract LSTM for printed, TrOCR for handwriting, hybrid for mixed pages)
  */
 export async function processImageWithLocalOcr(params: {
   imageBuffer: Buffer;
@@ -387,7 +456,6 @@ export async function processImageWithLocalOcr(params: {
 
   // Stage 1b + 3d: Combined Sauvola/Otsu Adaptive Threshold + Morphological Stroke Bridging
   const otsuBin = binarizeOtsu(noRules, w, h);
-  // Blend Otsu cleanly only to keep strong uniform printed ink, while Sauvola handles uneven shadows
   const blendedBinary = new Uint8ClampedArray(w * h);
   for (let i = 0; i < blendedBinary.length; i++) {
     blendedBinary[i] = cleanBinary[i] === 0 || (otsuBin[i] === 0 && noRules[i] < 135) ? 0 : 255;
@@ -408,7 +476,7 @@ export async function processImageWithLocalOcr(params: {
   appliedSteps.push(`layout-regions(${regions.length})`);
 
   const detection = detectHandwriting(cleanBinary, w, h);
-  const detectedStyle: 'printed' | 'handwriting' = detection.isHandwriting
+  const initialStyle: 'printed' | 'handwriting' = detection.isHandwriting
     ? 'handwriting'
     : 'printed';
 
@@ -431,24 +499,84 @@ export async function processImageWithLocalOcr(params: {
     await saveGrayscalePng(path.join(runExportDir, '05_adaptive_binary.png'), regionBinary, w, h);
   }
 
-  const runOfflinePrinted = async (): Promise<{
+  // Blank / covered lens / low-ink edge guard (prevents TrOCR hallucinations on empty frames)
+  let totalInkPixels = 0;
+  for (let i = 0; i < regionBinary.length; i++) {
+    if (regionBinary[i] === 0) totalInkPixels++;
+  }
+  if (totalInkPixels < 30 || regions.length === 0) {
+    appliedSteps.push('no-ink-detected');
+    if (runExportDir) {
+      fs.writeFileSync(
+        path.join(runExportDir, 'extracted_text.txt'),
+        `Profile: ${ocrProfile}\nPipeline steps: ${appliedSteps.join(' -> ')}\nNo readable ink detected.`,
+        'utf8'
+      );
+    }
+    return {
+      text: '',
+      lines: [],
+      profile: ocrProfile,
+      detectedStyle: initialStyle,
+      detection,
+      recognizer: printedModelReady
+        ? 'tesseract-host'
+        : handwritingModelReady
+          ? 'trocr-host'
+          : 'vision-fallback',
+      qualityScore: 0,
+      skewAngle,
+      darkInverted,
+      perspectiveWarped,
+      bordersCropped,
+      dpiScale,
+      appliedSteps,
+      regionsCount: regions.length,
+      processedPreview,
+      exportDir: runExportDir,
+    };
+  }
+
+  // Fallback immediately if neither local model exists
+  if (!handwritingModelReady && !printedModelReady) {
+    return {
+      text: '',
+      lines: [],
+      profile: ocrProfile,
+      detectedStyle: initialStyle,
+      detection,
+      recognizer: 'vision-fallback',
+      qualityScore: 0,
+      skewAngle,
+      darkInverted,
+      perspectiveWarped,
+      bordersCropped,
+      dpiScale,
+      appliedSteps,
+      regionsCount: regions.length,
+      processedPreview,
+      exportDir: runExportDir,
+    };
+  }
+
+  const runOfflinePrintedOnBoxes = async (
+    targetRegions: Array<{ x0: number; y0: number; x1: number; y1: number }>
+  ): Promise<{
     text: string;
     lines: LocalOcrLineResult[];
     qualityScore: number;
   }> => {
-    const activeRegions =
-      regions.length > 0 ? regions : [{ x0: 0, y0: 0, x1: w - 1, y1: h - 1, inkPixels: 100 }];
-
+    const pad = 18;
     const allLines: LocalOcrLineResult[] = [];
     const regionTexts: string[] = [];
 
-    for (const reg of activeRegions) {
-      const crop = cropRegionWithPadding(contrastGray, w, h, reg, 18);
+    for (const reg of targetRegions) {
+      const crop = cropRegionWithPadding(contrastGray, w, h, reg, pad);
       const res = await recognizePrintedBuffer({
         grayOrBinary: crop.data,
         width: crop.width,
         height: crop.height,
-        psm: activeRegions.length > 1 ? PSM.SINGLE_BLOCK : PSM.AUTO,
+        psm: targetRegions.length > 1 || regions.length > 1 ? PSM.SINGLE_BLOCK : PSM.AUTO,
       });
       if (res.text.trim()) {
         regionTexts.push(res.text.trim());
@@ -457,10 +585,10 @@ export async function processImageWithLocalOcr(params: {
             text: l.text,
             confidence: l.confidence,
             bbox: {
-              x0: reg.x0 + l.bbox.x0,
-              y0: reg.y0 + l.bbox.y0,
-              x1: reg.x0 + l.bbox.x1,
-              y1: reg.y0 + l.bbox.y1,
+              x0: Math.max(0, reg.x0 + l.bbox.x0 - pad),
+              y0: Math.max(0, reg.y0 + l.bbox.y0 - pad),
+              x1: Math.min(w - 1, reg.x0 + l.bbox.x1 - pad),
+              y1: Math.min(h - 1, reg.y0 + l.bbox.y1 - pad),
             },
           });
         }
@@ -479,183 +607,153 @@ export async function processImageWithLocalOcr(params: {
     };
   };
 
-  const wantPrinted =
-    ocrProfile === 'printed' || (ocrProfile === 'auto' && detectedStyle === 'printed');
+  const runOfflineHandwritingOnLines = async (
+    targetLineBoxes: LineBox[],
+    exportLineImages = false
+  ): Promise<{
+    text: string;
+    lines: LocalOcrLineResult[];
+    qualityScore: number;
+    droppedHallucinations: number;
+    rawCount: number;
+  }> => {
+    if (!handwritingModelReady || targetLineBoxes.length === 0) {
+      return { text: '', lines: [], qualityScore: 0, droppedHallucinations: 0, rawCount: 0 };
+    }
 
-  // Path A: Offline Printed OCR (Tesseract LSTM)
-  if (wantPrinted && printedModelReady) {
-    const printed = await runOfflinePrinted();
+    const chunkPlans = targetLineBoxes.map((box) => ({
+      lineBox: box,
+      chunks: splitWideLineBox(closedForSeg, w, h, box, 5.0),
+    }));
 
+    const flatChunks: CroppedLine[] = [];
+    for (const plan of chunkPlans) {
+      for (const chunkBox of plan.chunks) {
+        flatChunks.push(cropLine(contrastGray, w, h, chunkBox, 16));
+      }
+    }
+
+    if (exportLineImages && runExportDir) {
+      for (let i = 0; i < flatChunks.length; i++) {
+        const idx = String(i + 1).padStart(2, '0');
+        await saveGrayscalePng(
+          path.join(runExportDir, `06_line_${idx}.png`),
+          flatChunks[i].data,
+          flatChunks[i].width,
+          flatChunks[i].height
+        );
+      }
+    }
+
+    const recognizedChunks = await recognizeLines(flatChunks);
+    let cursor = 0;
+    const rawLines = chunkPlans.map((plan) => {
+      const count = plan.chunks.length;
+      const slice = recognizedChunks.slice(cursor, cursor + count);
+      cursor += count;
+      const joinedText = slice
+        .map((s) => s.text)
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const avgConf =
+        slice.length > 0
+          ? slice.reduce((acc, s) => acc + s.confidence, 0) / slice.length
+          : 0;
+      return {
+        text: joinedText,
+        confidence: Number(avgConf.toFixed(2)),
+        bbox: plan.lineBox,
+      };
+    });
+
+    const cleanedLines = postprocessHandwrittenLines(rawLines);
+    const droppedHallucinations = Math.max(0, rawLines.length - cleanedLines.length);
+
+    const finalLines: LocalOcrLineResult[] = cleanedLines.map((l) => ({
+      text: l.text,
+      confidence: l.confidence,
+      bbox: l.bbox || { x0: 0, y0: 0, x1: w, y1: h },
+    }));
+
+    const fullText = finalLines.map((l) => l.text).join('\n');
+    const meanLineConf =
+      finalLines.length > 0
+        ? finalLines.reduce((acc, l) => acc + l.confidence, 0) / finalLines.length
+        : 0;
+    const survivalRatio = rawLines.length > 0 ? finalLines.length / rawLines.length : 0;
+    const qualityScore = Number(
+      (finalLines.length > 0 ? meanLineConf * (0.5 + 0.5 * survivalRatio) : 0).toFixed(2)
+    );
+
+    return {
+      text: fullText,
+      lines: finalLines,
+      qualityScore,
+      droppedHallucinations,
+      rawCount: targetLineBoxes.length,
+    };
+  };
+
+  const getOrderedLineBoxesForRegions = (
+    targetRegions: Array<{ x0: number; y0: number; x1: number; y1: number }>
+  ): LineBox[] => {
+    const hasSideBySideColumns =
+      targetRegions.length > 1 &&
+      targetRegions.some((a, idx) =>
+        targetRegions.some(
+          (b, jdx) =>
+            idx !== jdx &&
+            (a.x1 < b.x0 - 20 || b.x1 < a.x0 - 20) &&
+            Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 20
+        )
+      );
+
+    if (hasSideBySideColumns || targetRegions.length === 1) {
+      const boxes: LineBox[] = [];
+      for (const reg of targetRegions) {
+        const regBin = maskBinaryOutsideBox(closedForSeg, w, h, reg);
+        boxes.push(...segmentLines(regBin, w, h));
+      }
+      if (boxes.length > 0) return boxes;
+    }
+    return segmentLines(closedForSeg, w, h);
+  };
+
+  const writeReportAndReturn = (result: LocalOcrResponse, extraNotes: string): LocalOcrResponse => {
     if (runExportDir) {
+      const linesReport = result.lines
+        .map((l, idx) => `Line ${idx + 1} (${Math.round(l.confidence * 100)}%): ${l.text}`)
+        .join('\n');
       const report = [
         `Profile: ${ocrProfile}`,
-        `Detected style: ${detectedStyle} (score=${detection.score})`,
+        `Detected style: ${result.detectedStyle} (pageScore=${detection.score})`,
         `Pipeline steps: ${appliedSteps.join(' -> ')}`,
-        `Engine: Tesseract LSTM (Offline Printed) | Quality: ${printed.qualityScore}`,
+        `Engine: ${result.recognizer} | Quality: ${result.qualityScore}`,
+        extraNotes,
+        linesReport ? `---\n${linesReport}` : '',
         `---`,
-        printed.text,
-      ].join('\n');
+        result.text,
+      ]
+        .filter(Boolean)
+        .join('\n');
       fs.writeFileSync(path.join(runExportDir, 'extracted_text.txt'), report, 'utf8');
     }
+    return result;
+  };
 
-    return {
-      text: printed.text,
-      lines: printed.lines,
-      profile: ocrProfile,
-      detectedStyle,
-      detection,
-      recognizer: 'tesseract-host',
-      qualityScore: printed.qualityScore,
-      skewAngle,
-      darkInverted,
-      perspectiveWarped,
-      bordersCropped,
-      dpiScale,
-      appliedSteps,
-      regionsCount: regions.length,
-      processedPreview,
-      exportDir: runExportDir,
-    };
-  }
-
-  // Fallback if neither local model exists
-  if (!handwritingModelReady && !printedModelReady) {
-    return {
-      text: '',
-      lines: [],
-      profile: ocrProfile,
-      detectedStyle,
-      detection,
-      recognizer: 'vision-fallback',
-      qualityScore: 0,
-      skewAngle,
-      darkInverted,
-      perspectiveWarped,
-      bordersCropped,
-      dpiScale,
-      appliedSteps,
-      regionsCount: regions.length,
-      processedPreview,
-      exportDir: runExportDir,
-    };
-  }
-
-  // Path B: Offline Handwriting OCR (TrOCR on layout-ordered regions & morphological closed lines)
-  const hasSideBySideColumns =
-    regions.length > 1 &&
-    regions.some((a, idx) =>
-      regions.some(
-        (b, jdx) =>
-          idx !== jdx &&
-          (a.x1 < b.x0 - 20 || b.x1 < a.x0 - 20) &&
-          Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 20
-      )
-    );
-  const orderedLineBoxes: LineBox[] = [];
-  if (hasSideBySideColumns) {
-    for (const reg of regions) {
-      const regBin = new Uint8ClampedArray(w * h).fill(255);
-      for (let y = reg.y0; y <= reg.y1; y++) {
-        const rowOff = y * w;
-        for (let x = reg.x0; x <= reg.x1; x++) {
-          regBin[rowOff + x] = closedForSeg[rowOff + x];
-        }
-      }
-      orderedLineBoxes.push(...segmentLines(regBin, w, h));
-    }
-  }
-  const lineBoxes =
-    orderedLineBoxes.length > 0 ? orderedLineBoxes : segmentLines(closedForSeg, w, h);
-
-  const chunkPlans = lineBoxes.map((box) => ({
-    lineBox: box,
-    chunks: splitWideLineBox(closedForSeg, w, h, box, 5.0),
-  }));
-
-  const flatChunks: CroppedLine[] = [];
-  for (const plan of chunkPlans) {
-    for (const chunkBox of plan.chunks) {
-      flatChunks.push(cropLine(contrastGray, w, h, chunkBox, 16));
-    }
-  }
-
-  if (runExportDir) {
-    for (let i = 0; i < flatChunks.length; i++) {
-      const idx = String(i + 1).padStart(2, '0');
-      await saveGrayscalePng(
-        path.join(runExportDir, `06_line_${idx}.png`),
-        flatChunks[i].data,
-        flatChunks[i].width,
-        flatChunks[i].height
-      );
-    }
-  }
-
-  const recognizedChunks = handwritingModelReady ? await recognizeLines(flatChunks) : [];
-  let cursor = 0;
-  const rawLines = chunkPlans.map((plan) => {
-    const count = plan.chunks.length;
-    const slice = recognizedChunks.slice(cursor, cursor + count);
-    cursor += count;
-    const joinedText = slice
-      .map((s) => s.text)
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-    const avgConf =
-      slice.length > 0
-        ? slice.reduce((acc, s) => acc + s.confidence, 0) / slice.length
-        : 0;
-    return {
-      text: joinedText,
-      confidence: Number(avgConf.toFixed(2)),
-      bbox: plan.lineBox,
-    };
-  });
-
-  const cleanedLines = postprocessHandwrittenLines(rawLines);
-  const droppedHallucinations = Math.max(0, rawLines.length - cleanedLines.length);
-
-  const finalLines: LocalOcrLineResult[] = cleanedLines.map((l) => ({
-    text: l.text,
-    confidence: l.confidence,
-    bbox: l.bbox || { x0: 0, y0: 0, x1: w, y1: h },
-  }));
-
-  const fullText = finalLines.map((l) => l.text).join('\n');
-  const meanLineConf =
-    finalLines.length > 0
-      ? finalLines.reduce((acc, l) => acc + l.confidence, 0) / finalLines.length
-      : 0;
-  const survivalRatio = rawLines.length > 0 ? finalLines.length / rawLines.length : 0;
-  const qualityScore = Number(
-    (finalLines.length > 0 ? meanLineConf * (0.5 + 0.5 * survivalRatio) : 0).toFixed(2)
-  );
-
-  // Offline Cross-Check in Auto mode: if TrOCR confidence is weak and Tesseract is ready, compare offline
-  if (ocrProfile === 'auto' && printedModelReady && (qualityScore < 0.65 || !fullText)) {
-    const printedFallback = await runOfflinePrinted();
-    if (printedFallback.text && printedFallback.qualityScore >= Math.max(0.6, qualityScore + 0.08)) {
-      if (runExportDir) {
-        const report = [
-          `Profile: ${ocrProfile}`,
-          `Detected style: ${detectedStyle} -> offline cross-check promoted Tesseract`,
-          `Pipeline steps: ${appliedSteps.join(' -> ')}`,
-          `Engine: Tesseract LSTM (Offline Printed Cross-Check) | Quality: ${printedFallback.qualityScore}`,
-          `---`,
-          printedFallback.text,
-        ].join('\n');
-        fs.writeFileSync(path.join(runExportDir, 'extracted_text.txt'), report, 'utf8');
-      }
-
-      return {
-        text: printedFallback.text,
-        lines: printedFallback.lines,
+  // Explicit Printed Profile (kept deterministic for unit tests & direct API requests)
+  if (ocrProfile === 'printed' && printedModelReady) {
+    const printed = await runOfflinePrintedOnBoxes(regions);
+    return writeReportAndReturn(
+      {
+        text: printed.text,
+        lines: printed.lines,
         profile: ocrProfile,
         detectedStyle: 'printed',
         detection,
         recognizer: 'tesseract-host',
-        qualityScore: printedFallback.qualityScore,
+        qualityScore: printed.qualityScore,
         skewAngle,
         darkInverted,
         perspectiveWarped,
@@ -664,47 +762,313 @@ export async function processImageWithLocalOcr(params: {
         appliedSteps,
         regionsCount: regions.length,
         processedPreview,
-        droppedHallucinations,
         exportDir: runExportDir,
-      };
+      },
+      'Engine: Tesseract LSTM (Offline Printed)'
+    );
+  }
+
+  // Explicit Handwriting Profile (kept deterministic for unit tests & direct API requests)
+  if (ocrProfile === 'handwriting' && handwritingModelReady) {
+    const lineBoxes = getOrderedLineBoxesForRegions(regions);
+    const hw = await runOfflineHandwritingOnLines(lineBoxes, true);
+    return writeReportAndReturn(
+      {
+        text: hw.text,
+        lines: hw.lines,
+        profile: ocrProfile,
+        detectedStyle: 'handwriting',
+        detection,
+        recognizer: 'trocr-host',
+        qualityScore: hw.qualityScore,
+        skewAngle,
+        darkInverted,
+        perspectiveWarped,
+        bordersCropped,
+        dpiScale,
+        appliedSteps,
+        regionsCount: regions.length,
+        processedPreview,
+        droppedHallucinations: hw.droppedHallucinations,
+        exportDir: runExportDir,
+      },
+      `Engine: TrOCR (Offline Handwriting) | Lines segmented: ${lineBoxes.length} | Kept: ${hw.lines.length} | Dropped: ${hw.droppedHallucinations}`
+    );
+  }
+
+  // AUTO MODE: Multi-Region Mixed Printed + Handwriting Support
+  if (ocrProfile === 'auto' && regions.length > 1 && printedModelReady && handwritingModelReady) {
+    const mergedLines: LocalOcrLineResult[] = [];
+    let usedPrinted = false;
+    let usedHandwriting = false;
+    let totalDropped = 0;
+
+    for (const reg of regions) {
+      const regCleanBin = cropRegionWithPadding(cleanBinary, w, h, reg, 8);
+      const regDet = detectHandwriting(regCleanBin.data, regCleanBin.width, regCleanBin.height);
+      const regSegBin = maskBinaryOutsideBox(closedForSeg, w, h, reg);
+      const regLineBoxes = segmentLines(regSegBin, w, h);
+
+      if (!regDet.isHandwriting) {
+        const pr = await runOfflinePrintedOnBoxes([reg]);
+        const prPlaus = scoreTextPlausibility(pr.text, pr.qualityScore);
+        if (
+          (!pr.text || pr.qualityScore < 0.7 || prPlaus < 0.56) &&
+          regLineBoxes.length > 0
+        ) {
+          const hw = await runOfflineHandwritingOnLines(regLineBoxes, false);
+          const hwPlaus = scoreTextPlausibility(hw.text, hw.qualityScore);
+          totalDropped += hw.droppedHallucinations;
+          if (hw.text && (hwPlaus > prPlaus + 0.05 || !pr.text)) {
+            mergedLines.push(...hw.lines);
+            usedHandwriting = true;
+            continue;
+          }
+        }
+        if (pr.text) {
+          mergedLines.push(...pr.lines);
+          usedPrinted = true;
+        }
+      } else {
+        const hw = await runOfflineHandwritingOnLines(regLineBoxes, false);
+        const hwPlaus = scoreTextPlausibility(hw.text, hw.qualityScore);
+        totalDropped += hw.droppedHallucinations;
+        if (!hw.text || hw.qualityScore < 0.65 || hwPlaus < 0.56) {
+          const pr = await runOfflinePrintedOnBoxes([reg]);
+          const prPlaus = scoreTextPlausibility(pr.text, pr.qualityScore);
+          if (pr.text && (prPlaus >= hwPlaus + 0.08 || !hw.text)) {
+            mergedLines.push(...pr.lines);
+            usedPrinted = true;
+            continue;
+          }
+        }
+        if (hw.text) {
+          mergedLines.push(...hw.lines);
+          usedHandwriting = true;
+        }
+      }
+    }
+
+    const finalStyle: DetectedStyle =
+      usedPrinted && usedHandwriting
+        ? 'mixed'
+        : usedHandwriting
+          ? 'handwriting'
+          : usedPrinted
+            ? 'printed'
+            : initialStyle;
+    const finalRecognizer: RecognizerEngine =
+      finalStyle === 'mixed'
+        ? 'hybrid-host'
+        : finalStyle === 'handwriting'
+          ? 'trocr-host'
+          : 'tesseract-host';
+
+    if (finalStyle === 'mixed') {
+      appliedSteps.push('auto-mixed-printed-handwriting');
+    }
+
+    const avgConf =
+      mergedLines.length > 0
+        ? mergedLines.reduce((acc, l) => acc + l.confidence, 0) / mergedLines.length
+        : 0;
+
+    return writeReportAndReturn(
+      {
+        text: mergedLines.map((l) => l.text).join('\n'),
+        lines: mergedLines,
+        profile: ocrProfile,
+        detectedStyle: finalStyle,
+        detection,
+        recognizer: finalRecognizer,
+        qualityScore: Number(avgConf.toFixed(2)),
+        skewAngle,
+        darkInverted,
+        perspectiveWarped,
+        bordersCropped,
+        dpiScale,
+        appliedSteps,
+        regionsCount: regions.length,
+        processedPreview,
+        droppedHallucinations: totalDropped,
+        exportDir: runExportDir,
+      },
+      `Engine: ${finalRecognizer} (Multi-Region Auto)`
+    );
+  }
+
+  // AUTO MODE (Single-Region or Single-Engine Fallback) with Bidirectional Cross-Check + Line-Level Hybrid Recovery
+  if (!detection.isHandwriting && printedModelReady) {
+    const printed = await runOfflinePrintedOnBoxes(regions);
+    const printedPlaus = scoreTextPlausibility(printed.text, printed.qualityScore);
+
+    if (handwritingModelReady) {
+      const lineBoxes = getOrderedLineBoxesForRegions(regions).filter(
+        (b) => b.y1 - b.y0 + 1 >= 12
+      );
+
+      // Bidirectional cross-check: e.g. neat disconnected print handwriting that scored < 0.42 in detectHandwriting
+      if (!printed.text || printed.qualityScore < 0.7 || printedPlaus < 0.58) {
+        const hw = await runOfflineHandwritingOnLines(lineBoxes, true);
+        const hwPlaus = scoreTextPlausibility(hw.text, hw.qualityScore);
+
+        if (hw.text && (hwPlaus > printedPlaus + 0.05 || !printed.text)) {
+          appliedSteps.push('auto-crosscheck-trocr');
+          return writeReportAndReturn(
+            {
+              text: hw.text,
+              lines: hw.lines,
+              profile: ocrProfile,
+              detectedStyle: 'handwriting',
+              detection,
+              recognizer: 'trocr-host',
+              qualityScore: hw.qualityScore,
+              skewAngle,
+              darkInverted,
+              perspectiveWarped,
+              bordersCropped,
+              dpiScale,
+              appliedSteps,
+              regionsCount: regions.length,
+              processedPreview,
+              droppedHallucinations: hw.droppedHallucinations,
+              exportDir: runExportDir,
+            },
+            `Engine: TrOCR (Offline Bidirectional Cross-Check)`
+          );
+        }
+      }
+
+      // Single-region mixed lines recovery: strong printed lines + weak/missed handwritten lines in the same block
+      const strongPrintedLines = printed.lines.filter((l) => l.confidence >= 0.62);
+      const needsHybridLineCheck =
+        strongPrintedLines.length > 0 &&
+        (printed.lines.some((l) => l.confidence < 0.62) ||
+          lineBoxes.length > printed.lines.length);
+
+      if (needsHybridLineCheck) {
+        const uncoveredOrWeakBoxes = lineBoxes.filter((box) => {
+          const bestOverlap = strongPrintedLines.reduce(
+            (best, pl) => Math.max(best, verticalOverlapRatio(box, pl.bbox)),
+            0
+          );
+          return bestOverlap < 0.4;
+        });
+
+        if (uncoveredOrWeakBoxes.length > 0 && uncoveredOrWeakBoxes.length < lineBoxes.length) {
+          const hwPatch = await runOfflineHandwritingOnLines(uncoveredOrWeakBoxes, false);
+          if (hwPatch.lines.length > 0) {
+            const combinedLines = [...strongPrintedLines, ...hwPatch.lines].sort((a, b) =>
+              Math.abs(a.bbox.y0 - b.bbox.y0) > 16 ? a.bbox.y0 - b.bbox.y0 : a.bbox.x0 - b.bbox.x0
+            );
+            const avgConf =
+              combinedLines.reduce((acc, l) => acc + l.confidence, 0) / combinedLines.length;
+            appliedSteps.push('auto-hybrid-lines');
+            return writeReportAndReturn(
+              {
+                text: combinedLines.map((l) => l.text).join('\n'),
+                lines: combinedLines,
+                profile: ocrProfile,
+                detectedStyle: 'mixed',
+                detection,
+                recognizer: 'hybrid-host',
+                qualityScore: Number(avgConf.toFixed(2)),
+                skewAngle,
+                darkInverted,
+                perspectiveWarped,
+                bordersCropped,
+                dpiScale,
+                appliedSteps,
+                regionsCount: regions.length,
+                processedPreview,
+                droppedHallucinations: hwPatch.droppedHallucinations,
+                exportDir: runExportDir,
+              },
+              `Engine: Hybrid Tesseract+TrOCR (Mixed Single-Region)`
+            );
+          }
+        }
+      }
+    }
+
+    return writeReportAndReturn(
+      {
+        text: printed.text,
+        lines: printed.lines,
+        profile: ocrProfile,
+        detectedStyle: 'printed',
+        detection,
+        recognizer: 'tesseract-host',
+        qualityScore: printed.qualityScore,
+        skewAngle,
+        darkInverted,
+        perspectiveWarped,
+        bordersCropped,
+        dpiScale,
+        appliedSteps,
+        regionsCount: regions.length,
+        processedPreview,
+        exportDir: runExportDir,
+      },
+      'Engine: Tesseract LSTM (Offline Printed)'
+    );
+  }
+
+  // Handwriting primary path (plus Printed cross-check when auto)
+  const lineBoxes = getOrderedLineBoxesForRegions(regions);
+  const hw = await runOfflineHandwritingOnLines(lineBoxes, true);
+  const hwPlaus = scoreTextPlausibility(hw.text, hw.qualityScore);
+
+  if (ocrProfile === 'auto' && printedModelReady && (hw.qualityScore < 0.65 || !hw.text || hwPlaus < 0.56)) {
+    const printedFallback = await runOfflinePrintedOnBoxes(regions);
+    const printedPlaus = scoreTextPlausibility(printedFallback.text, printedFallback.qualityScore);
+    if (printedFallback.text && (printedPlaus >= hwPlaus + 0.08 || !hw.text)) {
+      appliedSteps.push('auto-crosscheck-tesseract');
+      return writeReportAndReturn(
+        {
+          text: printedFallback.text,
+          lines: printedFallback.lines,
+          profile: ocrProfile,
+          detectedStyle: 'printed',
+          detection,
+          recognizer: 'tesseract-host',
+          qualityScore: printedFallback.qualityScore,
+          skewAngle,
+          darkInverted,
+          perspectiveWarped,
+          bordersCropped,
+          dpiScale,
+          appliedSteps,
+          regionsCount: regions.length,
+          processedPreview,
+          droppedHallucinations: hw.droppedHallucinations,
+          exportDir: runExportDir,
+        },
+        'Engine: Tesseract LSTM (Offline Printed Cross-Check)'
+      );
     }
   }
 
-  if (runExportDir) {
-    const linesReport = finalLines
-      .map((l, idx) => `Line ${idx + 1} (${Math.round(l.confidence * 100)}%): ${l.text}`)
-      .join('\n');
-    const report = [
-      `Profile: ${ocrProfile}`,
-      `Detected style: ${detectedStyle} (score=${detection.score})`,
-      `Pipeline steps: ${appliedSteps.join(' -> ')}`,
-      `Engine: TrOCR (Offline Handwriting) | Quality: ${qualityScore}`,
-      `Lines segmented: ${lineBoxes.length} | Kept: ${finalLines.length} | Dropped: ${droppedHallucinations}`,
-      `---`,
-      linesReport,
-      `---`,
-      fullText,
-    ].join('\n');
-    fs.writeFileSync(path.join(runExportDir, 'extracted_text.txt'), report, 'utf8');
-  }
-
-  return {
-    text: fullText,
-    lines: finalLines,
-    profile: ocrProfile,
-    detectedStyle,
-    detection,
-    recognizer: 'trocr-host',
-    qualityScore,
-    skewAngle,
-    darkInverted,
-    perspectiveWarped,
-    bordersCropped,
-    dpiScale,
-    appliedSteps,
-    regionsCount: regions.length,
-    processedPreview,
-    droppedHallucinations,
-    exportDir: runExportDir,
-  };
+  return writeReportAndReturn(
+    {
+      text: hw.text,
+      lines: hw.lines,
+      profile: ocrProfile,
+      detectedStyle: 'handwriting',
+      detection,
+      recognizer: 'trocr-host',
+      qualityScore: hw.qualityScore,
+      skewAngle,
+      darkInverted,
+      perspectiveWarped,
+      bordersCropped,
+      dpiScale,
+      appliedSteps,
+      regionsCount: regions.length,
+      processedPreview,
+      droppedHallucinations: hw.droppedHallucinations,
+      exportDir: runExportDir,
+    },
+    `Engine: TrOCR (Offline Handwriting) | Lines segmented: ${lineBoxes.length} | Kept: ${hw.lines.length} | Dropped: ${hw.droppedHallucinations}`
+  );
 }
