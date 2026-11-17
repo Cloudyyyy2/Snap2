@@ -50,6 +50,18 @@ export {
   preprocessImageData,
 } from '../preprocess';
 
+export {
+  type LineBox,
+  type CroppedLine,
+  type WordBox,
+  type CroppedSquare,
+  segmentLines,
+  segmentWords,
+  splitWideLineBox,
+  cropLine,
+  cropToSquare,
+} from './lines';
+
 /**
  * Detects thin horizontal notebook ruled lines (long horizontal runs > 60% width,
  * thickness <= 3 px) and paints them with the local paper brightness while keeping

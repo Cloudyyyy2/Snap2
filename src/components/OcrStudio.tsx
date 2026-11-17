@@ -11,9 +11,11 @@ import {
   Maximize2,
   FileText,
   Clock,
+  Crop,
 } from 'lucide-react';
 import { CameraCapture } from './CameraCapture';
 import { Reminder, Category, Priority, ChecklistItem, DetectedStyle } from '../types';
+import { detectWordsOnImage, DetectedWordSquare } from '../lib/ocr/onDeviceWordDetector';
 
 export interface RecentScanItem {
   id: string;
@@ -102,6 +104,8 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
   const [draft, setDraft] = useState<DraftReminderState | null>(null);
   const [newStepText, setNewStepText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [detectedWords, setDetectedWords] = useState<DetectedWordSquare[]>([]);
+  const [showWordSquares, setShowWordSquares] = useState(false);
 
   const [recentScans, setRecentScans] = useState<RecentScanItem[]>(() => getStoredRecentScans());
 
@@ -218,6 +222,12 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
       setErrorMsg(null);
       setDraft(null);
       setScanMeta(null);
+      setDetectedWords([]);
+
+      // Analyze word edges on device in parallel
+      detectWordsOnImage(image, { maxDimension: 960, generateThumbnails: true, maxThumbnails: 24 })
+        .then((res) => setDetectedWords(res.words))
+        .catch(() => setDetectedWords([]));
 
       try {
         const canRunLocal =
@@ -910,6 +920,54 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                       placeholder="Review or edit recognized text before converting..."
                       className="w-full p-3.5 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-base sm:text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-indigo-500 leading-relaxed"
                     />
+
+                    {/* On-device Detected Word Squares inspector strip */}
+                    {detectedWords.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => setShowWordSquares((v) => !v)}
+                            className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 inline-flex items-center gap-1.5 hover:underline"
+                          >
+                            <Crop className="w-3 h-3" />
+                            <span>
+                              {showWordSquares ? 'Hide' : 'Show'} {detectedWords.length} Detected
+                              Word Squares
+                            </span>
+                          </button>
+                          <span className="text-[10px] text-zinc-400 font-mono-nums">
+                            Fitted to 1:1 squares
+                          </span>
+                        </div>
+
+                        {showWordSquares && (
+                          <div className="flex items-center gap-2 overflow-x-auto p-2 bg-zinc-50 dark:bg-zinc-950/80 border border-zinc-200 dark:border-zinc-800 rounded-xl no-scrollbar">
+                            {detectedWords.map((word, idx) => (
+                              <div
+                                key={word.id}
+                                className="flex flex-col items-center gap-1 shrink-0 p-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xs"
+                              >
+                                {word.thumbnailUrl ? (
+                                  <img
+                                    src={word.thumbnailUrl}
+                                    alt={`Word ${idx + 1}`}
+                                    className="w-12 h-12 rounded object-cover border border-zinc-100 dark:border-zinc-800"
+                                  />
+                                ) : (
+                                  <div className="w-12 h-12 rounded bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-400">
+                                    W{word.wordIndex + 1}
+                                  </div>
+                                )}
+                                <span className="text-[10px] font-mono-nums text-zinc-500">
+                                  W{word.wordIndex + 1}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div>

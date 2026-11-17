@@ -1,5 +1,22 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Camera, RefreshCw, X, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
+import {
+  Camera,
+  RefreshCw,
+  X,
+  Upload,
+  Loader2,
+  Image as ImageIcon,
+  Crop,
+  Check,
+  Square,
+  Sparkles,
+} from 'lucide-react';
+import {
+  detectWordsOnImage,
+  cropImageToSquareDataUrl,
+  WordDetectionResult,
+  DetectedWordSquare,
+} from '../lib/ocr/onDeviceWordDetector';
 
 interface CameraCaptureProps {
   onCapture: (dataUrl: string) => void;
@@ -36,6 +53,14 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
   const [isCapturing, setIsCapturing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // On-device versatile word-edge detection and square cropping states
+  const [autoSquareCrop, setAutoSquareCrop] = useState(true);
+  const [pendingCropImage, setPendingCropImage] = useState<string | null>(null);
+  const [wordDetection, setWordDetection] = useState<WordDetectionResult | null>(null);
+  const [selectedWord, setSelectedWord] = useState<DetectedWordSquare | null>(null);
+  const [isDetectingWords, setIsDetectingWords] = useState(false);
+  const [isApplyingCrop, setIsApplyingCrop] = useState(false);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -278,6 +303,103 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
     startCamera({ deviceId: '', facing: nextFacing });
   };
 
+  const handleCapturedImageReady = async (dataUrl: string) => {
+    if (!autoSquareCrop) {
+      stopStream();
+      onCapture(dataUrl);
+      return;
+    }
+
+    stopStream();
+    setPendingCropImage(dataUrl);
+    setIsDetectingWords(true);
+    setSelectedWord(null);
+
+    try {
+      const result = await detectWordsOnImage(dataUrl, {
+        maxDimension: 960,
+        generateThumbnails: true,
+        maxThumbnails: 24,
+      });
+
+      if (result.words.length > 0) {
+        setWordDetection(result);
+      } else {
+        // Fallback directly to full frame if no words found
+        setPendingCropImage(null);
+        setWordDetection(null);
+        onCapture(dataUrl);
+      }
+    } catch (err) {
+      console.warn('On-device word detection skipped:', err);
+      setPendingCropImage(null);
+      setWordDetection(null);
+      onCapture(dataUrl);
+    } finally {
+      setIsDetectingWords(false);
+    }
+  };
+
+  const handleApplyAllWordsSquareCrop = async () => {
+    if (!pendingCropImage || !wordDetection?.documentSquareBox) {
+      if (pendingCropImage) onCapture(pendingCropImage);
+      setPendingCropImage(null);
+      setWordDetection(null);
+      return;
+    }
+    setIsApplyingCrop(true);
+    try {
+      const box = {
+        x0: wordDetection.documentSquareBox.x0,
+        y0: wordDetection.documentSquareBox.y0,
+        x1: wordDetection.documentSquareBox.x1,
+        y1: wordDetection.documentSquareBox.y1,
+      };
+      const squareDataUrl = await cropImageToSquareDataUrl(pendingCropImage, box, 768, 0.12);
+      setPendingCropImage(null);
+      setWordDetection(null);
+      onCapture(squareDataUrl);
+    } catch {
+      onCapture(pendingCropImage);
+      setPendingCropImage(null);
+      setWordDetection(null);
+    } finally {
+      setIsApplyingCrop(false);
+    }
+  };
+
+  const handleApplySingleWordSquareCrop = async (word: DetectedWordSquare) => {
+    if (!pendingCropImage) return;
+    setIsApplyingCrop(true);
+    try {
+      const squareDataUrl = await cropImageToSquareDataUrl(pendingCropImage, word.box, 480, 0.22);
+      setPendingCropImage(null);
+      setWordDetection(null);
+      onCapture(squareDataUrl);
+    } catch {
+      onCapture(pendingCropImage);
+      setPendingCropImage(null);
+      setWordDetection(null);
+    } finally {
+      setIsApplyingCrop(false);
+    }
+  };
+
+  const handleKeepFullPhoto = () => {
+    if (pendingCropImage) {
+      onCapture(pendingCropImage);
+    }
+    setPendingCropImage(null);
+    setWordDetection(null);
+  };
+
+  const handleRetake = () => {
+    setPendingCropImage(null);
+    setWordDetection(null);
+    setSelectedWord(null);
+    startCamera();
+  };
+
   const handleCaptureFrame = () => {
     const video = videoRef.current;
     if (
@@ -301,8 +423,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
       // Always draw unmirrored raw frame so text is never backwards for OCR
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      stopStream();
-      onCapture(dataUrl);
+      handleCapturedImageReady(dataUrl);
     } finally {
       setIsCapturing(false);
     }
@@ -318,8 +439,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
     reader.onload = (ev) => {
       const result = ev.target?.result as string;
       if (result) {
-        stopStream();
-        onCapture(result);
+        handleCapturedImageReady(result);
       }
     };
     reader.readAsDataURL(file);
@@ -337,7 +457,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
 
   return (
     <div className="space-y-3">
-      {/* Main Viewfinder Surface (supports live camera + drag-and-drop + offline fallback) */}
+      {/* Main Viewfinder Surface (supports live camera + on-device word crop + drag-and-drop) */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -352,24 +472,101 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
             processSelectedFile(file);
           }
         }}
-        className={`relative rounded-2xl overflow-hidden border transition-colors bg-zinc-950 aspect-[3/4] sm:aspect-[4/3] max-h-[54vh] min-h-[280px] w-full flex items-center justify-center ${
+        className={`relative rounded-2xl overflow-hidden border transition-colors bg-zinc-950 aspect-[3/4] sm:aspect-[4/3] max-h-[54vh] min-h-[280px] w-full flex items-center justify-center select-none ${
           isDragOver
             ? 'border-indigo-500 ring-2 ring-indigo-500/40'
             : 'border-zinc-200 dark:border-zinc-800'
         }`}
       >
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`w-full h-full object-cover transition-opacity duration-200 ${
-            facingMode === 'user' ? 'scale-x-[-1]' : ''
-          } ${liveReady ? 'opacity-100' : 'opacity-0'}`}
-        />
+        {pendingCropImage ? (
+          <div className="relative w-full h-full flex items-center justify-center bg-zinc-950 overflow-hidden">
+            <img
+              src={pendingCropImage}
+              alt="Note to crop"
+              className="w-full h-full object-contain pointer-events-none"
+            />
+
+            {/* Detecting words loading overlay */}
+            {isDetectingWords && (
+              <div className="absolute inset-0 bg-black/65 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2.5 text-zinc-200 text-xs p-4 text-center z-20">
+                <Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
+                <span className="font-medium text-sm">Detecting word edges on device...</span>
+                <span className="text-[11px] text-zinc-400">
+                  Fitting each word into an unskewed square
+                </span>
+              </div>
+            )}
+
+            {/* Interactive detected word boxes and square outlines */}
+            {!isDetectingWords && wordDetection && (
+              <div className="absolute inset-0 z-10 pointer-events-auto">
+                {wordDetection.words.map((word) => {
+                  const isSelected = selectedWord?.id === word.id;
+                  return (
+                    <React.Fragment key={word.id}>
+                      {/* Word edge box */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWord(isSelected ? null : word)}
+                        style={{
+                          left: `${word.normalized.word.x * 100}%`,
+                          top: `${word.normalized.word.y * 100}%`,
+                          width: `${word.normalized.word.width * 100}%`,
+                          height: `${word.normalized.word.height * 100}%`,
+                        }}
+                        className={`absolute border transition-all rounded-[2px] cursor-pointer ${
+                          isSelected
+                            ? 'border-cyan-400 bg-cyan-400/35 ring-2 ring-cyan-400/80 z-20'
+                            : 'border-indigo-400/85 bg-indigo-500/20 hover:border-cyan-300 hover:bg-cyan-500/30 z-10'
+                        }`}
+                        title={`Word ${word.wordIndex + 1} (Tap to fit square)`}
+                      />
+
+                      {/* Selected word square boundary */}
+                      {isSelected && (
+                        <div
+                          style={{
+                            left: `${word.normalized.square.x * 100}%`,
+                            top: `${word.normalized.square.y * 100}%`,
+                            width: `${word.normalized.square.width * 100}%`,
+                            height: `${word.normalized.square.height * 100}%`,
+                          }}
+                          className="absolute border-2 border-dashed border-cyan-400 bg-cyan-500/10 rounded-lg pointer-events-none z-15 animate-pulse"
+                        />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+
+                {/* Overall document square enclosing all words */}
+                {!selectedWord && wordDetection.documentSquareBox && (
+                  <div
+                    style={{
+                      left: `${wordDetection.documentSquareBox.normalized.x * 100}%`,
+                      top: `${wordDetection.documentSquareBox.normalized.y * 100}%`,
+                      width: `${wordDetection.documentSquareBox.normalized.width * 100}%`,
+                      height: `${wordDetection.documentSquareBox.normalized.height * 100}%`,
+                    }}
+                    className="absolute border-2 border-dashed border-indigo-400/85 bg-indigo-500/10 rounded-xl pointer-events-none z-15"
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`w-full h-full object-cover transition-opacity duration-200 ${
+              facingMode === 'user' ? 'scale-x-[-1]' : ''
+            } ${liveReady ? 'opacity-100' : 'opacity-0'}`}
+          />
+        )}
 
         {/* Subtle alignment reticle guides when camera stream is active */}
-        {liveReady && (
+        {!pendingCropImage && liveReady && (
           <div className="pointer-events-none absolute inset-6 sm:inset-8">
             <div className="absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 border-white/55 rounded-tl-md" />
             <div className="absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 border-white/55 rounded-tr-md" />
@@ -387,14 +584,14 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
         )}
 
         {/* Starting / Paused state */}
-        {isStarting && !errorMsg && !paused && (
+        {!pendingCropImage && isStarting && !errorMsg && !paused && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-zinc-300 text-xs p-4 text-center">
             <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
             <span>Starting live camera...</span>
           </div>
         )}
 
-        {paused && !errorMsg && (
+        {!pendingCropImage && paused && !errorMsg && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-400 text-xs p-4 text-center bg-zinc-950">
             <Camera className="w-5 h-5 opacity-60" />
             <span>Camera paused while reviewing scan</span>
@@ -402,7 +599,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
         )}
 
         {/* Camera unavailable / permission denied interactive fallback */}
-        {errorMsg && (
+        {!pendingCropImage && errorMsg && (
           <div className="absolute inset-0 p-5 flex flex-col items-center justify-center text-center gap-3.5 bg-zinc-950/95">
             <div className="w-11 h-11 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-300 flex items-center justify-center">
               <Camera className="w-5 h-5" />
@@ -440,46 +637,72 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
           </div>
         )}
 
-        {/* Top Bar Overlay: Live status / Camera Device Picker / Optional Close */}
-        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 z-10">
-          <div className="flex items-center gap-2 min-w-0">
-            {devices.length > 1 ? (
-              <select
-                value={selectedDeviceId}
-                onChange={(e) => handleSwitchDevice(e.target.value)}
-                aria-label="Select camera device"
-                className="min-h-[40px] max-w-[190px] px-2.5 rounded-xl bg-zinc-900/85 text-zinc-100 border border-zinc-700 text-xs font-medium focus:outline-none truncate"
-              >
-                {devices.map((dev, idx) => (
-                  <option key={dev.deviceId || idx} value={dev.deviceId}>
-                    {dev.label || `Camera ${idx + 1}`}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950/75 text-zinc-200 text-[11px] font-medium backdrop-blur-sm">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    liveReady ? 'bg-emerald-400' : 'bg-zinc-500'
-                  }`}
-                />
-                <span>{statusNote || 'Auto-detects printed & handwriting'}</span>
+        {/* Top Bar Overlay */}
+        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 z-30">
+          {pendingCropImage ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950/85 text-cyan-300 text-[11px] font-medium backdrop-blur-sm border border-cyan-500/30">
+                <Crop className="w-3.5 h-3.5" />
+                <span>
+                  {wordDetection
+                    ? `${wordDetection.words.length} words detected · Square Fitted`
+                    : 'Detecting word edges...'}
+                </span>
               </span>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 min-w-0">
+              {devices.length > 1 ? (
+                <select
+                  value={selectedDeviceId}
+                  onChange={(e) => handleSwitchDevice(e.target.value)}
+                  aria-label="Select camera device"
+                  className="min-h-[40px] max-w-[190px] px-2.5 rounded-xl bg-zinc-900/85 text-zinc-100 border border-zinc-700 text-xs font-medium focus:outline-none truncate"
+                >
+                  {devices.map((dev, idx) => (
+                    <option key={dev.deviceId || idx} value={dev.deviceId}>
+                      {dev.label || `Camera ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950/75 text-zinc-200 text-[11px] font-medium backdrop-blur-sm">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      liveReady ? 'bg-emerald-400' : 'bg-zinc-500'
+                    }`}
+                  />
+                  <span>{statusNote || 'Auto-detects printed & handwriting'}</span>
+                </span>
+              )}
+            </div>
+          )}
 
-          {!embedded && onClose && (
+          {pendingCropImage ? (
             <button
               type="button"
-              onClick={() => {
-                stopStream();
-                onClose();
-              }}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-zinc-900/85 text-zinc-200 hover:text-white border border-zinc-700 shrink-0"
-              aria-label="Close camera"
+              onClick={handleRetake}
+              className="min-h-[36px] px-3 rounded-xl bg-zinc-900/85 text-zinc-200 hover:text-white border border-zinc-700 text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+              aria-label="Retake photo"
             >
-              <X className="w-4 h-4" />
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Retake</span>
             </button>
+          ) : (
+            !embedded &&
+            onClose && (
+              <button
+                type="button"
+                onClick={() => {
+                  stopStream();
+                  onClose();
+                }}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-zinc-900/85 text-zinc-200 hover:text-white border border-zinc-700 shrink-0"
+                aria-label="Close camera"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )
           )}
         </div>
       </div>
@@ -501,51 +724,167 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
         className="hidden"
       />
 
-      {/* Thumb-Zone Primary Action Bar (>=44px / 48px touch targets, fits cleanly at 390px) */}
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={handleFlipCamera}
-          disabled={paused}
-          className="min-h-[44px] px-3 sm:px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-          aria-label="Flip camera"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Flip</span>
-        </button>
+      {/* Action Controls Area */}
+      {pendingCropImage ? (
+        <div className="space-y-2.5">
+          {/* Scrollable Word Squares Carousel */}
+          {wordDetection && wordDetection.words.length > 0 && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 px-0.5">
+                <span>Tap a word to isolate its square crop:</span>
+                <span className="font-mono-nums">
+                  {selectedWord ? `Word ${selectedWord.wordIndex + 1} focused` : 'All notes square'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => setSelectedWord(null)}
+                  className={`min-h-[44px] px-3 rounded-xl border text-xs font-medium inline-flex items-center gap-1.5 shrink-0 transition-colors ${
+                    !selectedWord
+                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
+                      : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400'
+                  }`}
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  <span>All Notes Square</span>
+                </button>
 
-        <button
-          type="button"
-          onClick={handleCaptureFrame}
-          disabled={!liveReady || isCapturing}
-          className="min-h-[48px] flex-1 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 text-white text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all"
-        >
-          <Camera className="w-4 h-4 shrink-0" />
-          <span>Take Photo</span>
-        </button>
+                {wordDetection.words.map((word, idx) => {
+                  const isSelected = selectedWord?.id === word.id;
+                  return (
+                    <button
+                      key={word.id}
+                      type="button"
+                      onClick={() => setSelectedWord(isSelected ? null : word)}
+                      className={`min-h-[44px] px-2 py-1 rounded-xl border flex items-center gap-2 shrink-0 transition-colors ${
+                        isSelected
+                          ? 'border-cyan-500 bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 ring-2 ring-cyan-500/30'
+                          : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300'
+                      }`}
+                    >
+                      {word.thumbnailUrl ? (
+                        <img
+                          src={word.thumbnailUrl}
+                          alt={`Word ${idx + 1}`}
+                          className="w-7 h-7 rounded object-cover border border-zinc-200 dark:border-zinc-700 shrink-0"
+                        />
+                      ) : (
+                        <Square className="w-3.5 h-3.5 text-zinc-400" />
+                      )}
+                      <span className="text-[11px] font-mono-nums whitespace-nowrap">
+                        W{word.wordIndex + 1}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-        <button
-          type="button"
-          onClick={() => galleryInputRef.current?.click()}
-          className="min-h-[44px] px-3 sm:px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-          aria-label="Choose photo from gallery"
-        >
-          <ImageIcon className="w-3.5 h-3.5" />
-          <span>Gallery</span>
-        </button>
-      </div>
+          {/* Primary Action Buttons */}
+          <div className="flex items-center justify-between gap-2">
+            {selectedWord ? (
+              <button
+                type="button"
+                disabled={isApplyingCrop}
+                onClick={() => handleApplySingleWordSquareCrop(selectedWord)}
+                className="min-h-[48px] flex-1 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-700 active:scale-[0.98] disabled:opacity-50 text-white text-xs sm:text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all shadow-sm"
+              >
+                {isApplyingCrop ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Crop className="w-4 h-4" />
+                )}
+                <span>Square Crop Word {selectedWord.wordIndex + 1}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isApplyingCrop}
+                onClick={handleApplyAllWordsSquareCrop}
+                className="min-h-[48px] flex-1 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 text-white text-xs sm:text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all shadow-sm"
+              >
+                {isApplyingCrop ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Crop className="w-4 h-4" />
+                )}
+                <span>Square Crop All Words</span>
+              </button>
+            )}
 
-      {/* Subtle Secondary Row: Native OS Device Cam + Paste Hint */}
-      <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-        <button
-          type="button"
-          onClick={() => nativeInputRef.current?.click()}
-          className="min-h-[36px] inline-flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-200 underline underline-offset-2"
-        >
-          <span>Use native device camera</span>
-        </button>
-        <span className="truncate">Drop image or paste (Ctrl+V)</span>
-      </div>
+            <button
+              type="button"
+              disabled={isApplyingCrop}
+              onClick={handleKeepFullPhoto}
+              className="min-h-[48px] px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+            >
+              <span>Full Photo</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* Standard Viewfinder Action Bar */
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={handleFlipCamera}
+              disabled={paused}
+              className="min-h-[44px] px-3 sm:px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+              aria-label="Flip camera"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Flip</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCaptureFrame}
+              disabled={!liveReady || isCapturing}
+              className="min-h-[48px] flex-1 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 text-white text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all"
+            >
+              <Camera className="w-4 h-4 shrink-0" />
+              <span>Take Photo</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => galleryInputRef.current?.click()}
+              className="min-h-[44px] px-3 sm:px-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+              aria-label="Choose photo from gallery"
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Gallery</span>
+            </button>
+          </div>
+
+          {/* Versatile Square-Crop Mode Toggle + Native OS Cam */}
+          <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <button
+              type="button"
+              onClick={() => setAutoSquareCrop((v) => !v)}
+              className={`min-h-[32px] px-2.5 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                autoSquareCrop
+                  ? 'border-indigo-500/50 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
+                  : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400'
+              }`}
+            >
+              <Crop className="w-3 h-3" />
+              <span>{autoSquareCrop ? 'Auto-Square Words: ON' : 'Square Crop: OFF'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => nativeInputRef.current?.click()}
+              className="min-h-[32px] inline-flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-200 underline underline-offset-2"
+            >
+              <span>Native camera</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
