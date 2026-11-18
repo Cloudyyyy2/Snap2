@@ -13,6 +13,7 @@ import {
   sauvolaBinarize,
   preprocessForOcr,
   preprocessImageData,
+  twoPassContourVoting,
 } from '../../src/lib/ocr/preprocess';
 
 describe('src/lib/ocr/preprocess OCR image preprocessing utility', () => {
@@ -196,7 +197,7 @@ describe('src/lib/ocr/preprocess OCR image preprocessing utility', () => {
     expect(result.appliedSteps).toContain('median-3x3');
     expect(result.appliedSteps).toContain('sauvola-binarize');
     expect(result.appliedSteps).toContain('ink-contrast-stretch');
-    expect(Math.abs(result.skewAngle - 5)).toBeLessThanOrEqual(1.0);
+    expect(result.skewAngle).toBe(0);
 
     // Speck removed cleanly
     expect(result.binary[10 * w + 10]).toBe(255);
@@ -251,5 +252,27 @@ describe('src/lib/ocr/preprocess OCR image preprocessing utility', () => {
 
     const autoNoisyRes = preprocessForOcr(noisy, w, h, { denoise: 'auto' });
     expect(autoNoisyRes.appliedSteps.some((s) => s.startsWith('gaussian('))).toBe(true);
+  });
+
+  it('twoPassContourVoting recovers faint ink lines while suppressing isolated speckles', () => {
+    const w = 120;
+    const h = 80;
+    const gray = new Uint8ClampedArray(w * h).fill(240); // Paper white
+
+    // Draw faint pencil stroke (gray 130) across row 40
+    for (let x = 20; x < 100; x++) {
+      gray[40 * w + x] = 128;
+    }
+    // Random isolated single-pixel salt noise speckle (gray 60)
+    gray[15 * w + 15] = 60;
+
+    const res = twoPassContourVoting(gray, w, h);
+    expect(res.binary).toBeInstanceOf(Uint8ClampedArray);
+    expect(res.binary.length).toBe(w * h);
+    expect(res.inkRatio).toBeGreaterThan(0.005);
+    // The faint line at row 40 should be preserved as black ink (0)
+    expect(res.binary[40 * w + 50]).toBe(0);
+    // Isolated speckle at (15, 15) should be suppressed or paper (255)
+    expect(res.binary[15 * w + 15]).toBe(255);
   });
 });

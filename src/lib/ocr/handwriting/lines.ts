@@ -314,6 +314,30 @@ export function splitWideLineBox(
   return chunks;
 }
 
+export interface WordBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  lineIndex: number;
+  wordIndex: number;
+  squareBox: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    size: number;
+  };
+}
+
+export interface CroppedSquare {
+  data: Uint8ClampedArray;
+  size: number;
+  box: LineBox;
+  squareBox: { x0: number; y0: number; x1: number; y1: number; size: number };
+  scale: number;
+}
+
 /**
  * Crops a single line from the flattened grayscale buffer with clean white padding.
  */
@@ -342,3 +366,241 @@ export function cropLine(
 
   return { data, width: cropW, height: cropH, box };
 }
+
+/**
+ * Segments a binarized document or line region into individual word bounding boxes,
+ * detecting the exact tight ink edges of each word, and computing a square bounding box
+ * that fits the word centered with equal width & height.
+ */
+export function segmentWords(
+  binary: Uint8ClampedArray,
+  w: number,
+  h: number,
+  explicitLines?: LineBox[]
+): WordBox[] {
+  if (w === 0 || h === 0) return [];
+
+  const lines =
+    explicitLines && explicitLines.length > 0 ? explicitLines : segmentLines(binary, w, h);
+  if (lines.length === 0) return [];
+
+  const activeBinary =
+    w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
+  const words: WordBox[] = [];
+
+  lines.forEach((line, lineIdx) => {
+    const lineW = line.x1 - line.x0 + 1;
+    const lineH = Math.max(1, line.y1 - line.y0 + 1);
+    if (lineW <= 4 || lineH <= 4) return;
+
+    // Projection of ink columns within this line
+    const colInk = new Int32Array(lineW);
+    let totalLineInk = 0;
+
+    for (let y = Math.max(0, line.y0); y <= Math.min(h - 1, line.y1); y++) {
+      const rowOffset = y * w;
+      for (let x = line.x0; x <= line.x1; x++) {
+        if (activeBinary[rowOffset + x] === 0) {
+          colInk[x - line.x0]++;
+          totalLineInk++;
+        }
+      }
+    }
+
+    if (totalLineInk < 6) return;
+
+    // Collect non-zero gaps to compute adaptive inter-word spacing threshold
+    const gaps: number[] = [];
+    let inInk = false;
+    let gapStart = -1;
+
+    for (let i = 0; i < lineW; i++) {
+      if (colInk[i] > 0) {
+        if (!inInk) {
+          inInk = true;
+          if (gapStart !== -1) {
+            const gapLen = i - gapStart;
+            if (gapLen > 0) gaps.push(gapLen);
+          }
+        }
+      } else {
+        if (inInk) {
+          inInk = false;
+          gapStart = i;
+        }
+      }
+    }
+
+    // Typical word gap is ~0.22*lineH or greater than inter-letter kerning
+    let wordGapThreshold = Math.max(5, Math.round(lineH * 0.22));
+    if (gaps.length >= 4) {
+      gaps.sort((a, b) => a - b);
+      const medianGap = gaps[Math.floor(gaps.length * 0.5)];
+      const p80Gap = gaps[Math.floor(gaps.length * 0.8)];
+      if (p80Gap >= medianGap * 1.8 && p80Gap >= 4) {
+        wordGapThreshold = Math.max(wordGapThreshold, Math.round(medianGap * 1.5));
+      }
+    }
+
+    // Cluster columns into words based on wordGapThreshold
+    interface WordColSpan {
+      startX: number;
+      endX: number;
+    }
+    const spans: WordColSpan[] = [];
+    let curSpanStart = -1;
+    let curSpanEnd = -1;
+    let currentZeroCount = 0;
+
+    for (let i = 0; i < lineW; i++) {
+      if (colInk[i] > 0) {
+        if (curSpanStart === -1) {
+          curSpanStart = i;
+        } else if (currentZeroCount >= wordGapThreshold) {
+          spans.push({ startX: curSpanStart, endX: curSpanEnd });
+          curSpanStart = i;
+        }
+        curSpanEnd = i;
+        currentZeroCount = 0;
+      } else if (curSpanStart !== -1) {
+        currentZeroCount++;
+      }
+    }
+    if (curSpanStart !== -1 && curSpanEnd >= curSpanStart) {
+      spans.push({ startX: curSpanStart, endX: curSpanEnd });
+    }
+
+    let wordInLineIdx = 0;
+    for (const span of spans) {
+      const absStartX = line.x0 + span.startX;
+      const absEndX = line.x0 + span.endX;
+
+      // Tighten ink bounding box vertically and horizontally
+      let minX = absEndX;
+      let maxX = absStartX;
+      let minY = line.y1;
+      let maxY = line.y0;
+      let inkCount = 0;
+
+      for (let y = Math.max(0, line.y0); y <= Math.min(h - 1, line.y1); y++) {
+        const rowOff = y * w;
+        for (let x = absStartX; x <= absEndX; x++) {
+          if (activeBinary[rowOff + x] === 0) {
+            inkCount++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      if (inkCount < 5 || maxX < minX || maxY < minY) continue;
+
+      const wordW = maxX - minX + 1;
+      const wordH = maxY - minY + 1;
+      if (wordW < 3 && wordH < 3) continue;
+
+      // Fit to square with proportional padding
+      const pad = Math.round(Math.max(6, Math.min(wordW, wordH) * 0.18));
+      const side = Math.max(wordW + pad * 2, wordH + pad * 2);
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const sqX0 = Math.round(cx - side / 2);
+      const sqY0 = Math.round(cy - side / 2);
+
+      words.push({
+        x0: minX,
+        y0: minY,
+        x1: maxX,
+        y1: maxY,
+        lineIndex: lineIdx,
+        wordIndex: wordInLineIdx++,
+        squareBox: {
+          x0: sqX0,
+          y0: sqY0,
+          x1: sqX0 + side - 1,
+          y1: sqY0 + side - 1,
+          size: side,
+        },
+      });
+    }
+  });
+
+  return words;
+}
+
+/**
+ * Crops any bounding box (word, symbol, or text line) from a grayscale buffer and fits
+ * it cleanly into a square without distortion, centered with white paper background (255),
+ * optionally resampling to a fixed targetSize (e.g. 384x384 for vision encoders).
+ */
+export function cropToSquare(
+  gray: Uint8ClampedArray,
+  w: number,
+  h: number,
+  box: LineBox,
+  targetSize?: number,
+  padRatio = 0.18
+): CroppedSquare {
+  const boxW = Math.max(1, box.x1 - box.x0 + 1);
+  const boxH = Math.max(1, box.y1 - box.y0 + 1);
+  const pad = Math.round(Math.max(6, Math.max(boxW, boxH) * padRatio));
+  const side = Math.max(boxW, boxH) + pad * 2;
+
+  const cx = (box.x0 + box.x1) / 2;
+  const cy = (box.y0 + box.y1) / 2;
+  const sqX0 = Math.round(cx - side / 2);
+  const sqY0 = Math.round(cy - side / 2);
+
+  const outSize = targetSize ? Math.max(24, Math.round(targetSize)) : side;
+  const out = new Uint8ClampedArray(outSize * outSize);
+  out.fill(255);
+
+  const scale = outSize / side;
+
+  for (let dy = 0; dy < outSize; dy++) {
+    const sy = sqY0 + dy / scale;
+    const y0 = Math.floor(sy);
+    const fy = sy - y0;
+    const dstRow = dy * outSize;
+
+    for (let dx = 0; dx < outSize; dx++) {
+      const sx = sqX0 + dx / scale;
+      const x0 = Math.floor(sx);
+      const fx = sx - x0;
+
+      if (x0 < 0 || x0 >= w || y0 < 0 || y0 >= h) {
+        out[dstRow + dx] = 255;
+        continue;
+      }
+
+      const x1 = Math.min(w - 1, x0 + 1);
+      const y1 = Math.min(h - 1, y0 + 1);
+
+      const i00 = gray[y0 * w + x0];
+      const i10 = gray[y0 * w + x1];
+      const i01 = gray[y1 * w + x0];
+      const i11 = gray[y1 * w + x1];
+
+      const top = i00 + (i10 - i00) * fx;
+      const bottom = i01 + (i11 - i01) * fx;
+      out[dstRow + dx] = Math.round(top + (bottom - top) * fy);
+    }
+  }
+
+  return {
+    data: out,
+    size: outSize,
+    box,
+    squareBox: {
+      x0: sqX0,
+      y0: sqY0,
+      x1: sqX0 + side - 1,
+      y1: sqY0 + side - 1,
+      size: side,
+    },
+    scale,
+  };
+}
+

@@ -48,7 +48,20 @@ export {
   applyMorphologicalOp,
   preprocessForOcr,
   preprocessImageData,
+  twoPassContourVoting,
 } from '../preprocess';
+
+export {
+  type LineBox,
+  type CroppedLine,
+  type WordBox,
+  type CroppedSquare,
+  segmentLines,
+  segmentWords,
+  splitWideLineBox,
+  cropLine,
+  cropToSquare,
+} from './lines';
 
 /**
  * Detects thin horizontal notebook ruled lines (long horizontal runs > 60% width,
@@ -116,18 +129,19 @@ export function removeRuledLines(
       }
     }
 
-    if (covered / w >= 0.55 && maxRun >= w * 0.3 && lineSamples.length > 0) {
+    if (covered / w >= 0.35 && maxRun >= w * 0.20 && lineSamples.length > 0) {
       lineSamples.sort((a, b) => a - b);
       const med = lineSamples[Math.floor(lineSamples.length * 0.5)];
       // Ruled lines are typically mid/light gray/blue (not solid black ink block)
-      if (med >= 55 && med <= paper - 10) {
+      if (med >= 45 && med <= paper - 8) {
         candidateRow[y] = 1;
         rowMedian[y] = med;
       }
     }
   }
 
-  // Group contiguous candidate rows; ruled lines have thickness <= 4 px
+  // Group contiguous candidate rows; ruled lines have thickness <= 6 px (scaled to width)
+  const maxAllowedThickness = Math.max(5, Math.round(w / 280));
   let y = 0;
   while (y < h) {
     if (!candidateRow[y]) {
@@ -141,21 +155,27 @@ export function removeRuledLines(
     }
     const thickness = y - startY;
 
-    if (thickness <= 4) {
+    if (thickness <= maxAllowedThickness) {
       // Estimate surrounding non-line paper brightness above/below the band
       const aboveY = Math.max(0, startY - 2);
       const belowY = Math.min(h - 1, y + 1);
 
       for (let ry = startY; ry < y; ry++) {
         const lineTone = rowMedian[ry];
+        const paper = rowPaper[ry];
         const rowOffset = ry * w;
         for (let x = 0; x < w; x++) {
           const cur = out[rowOffset + x];
           const surround = Math.round((gray[aboveY * w + x] + gray[belowY * w + x]) / 2);
-          // Keep crossing ink strokes that are noticeably darker than the ruled line
-          const isCrossingInk = cur < lineTone - 24;
-          if (!isCrossingInk && cur <= surround - 6) {
-            out[rowOffset + x] = Math.max(cur, surround, rowPaper[ry]);
+
+          // Check if pixel belongs to a vertical handwriting stroke (graphite pencil or pen crossing the ruling)
+          const hasVerticalAbove = ry >= 3 && gray[(ry - 2) * w + x] < paper - 14;
+          const hasVerticalBelow = ry < h - 3 && gray[(ry + 2) * w + x] < paper - 14;
+          const isNoticeablyDarker = cur < lineTone - 14;
+          const isCrossingInk = isNoticeablyDarker || hasVerticalAbove || hasVerticalBelow;
+
+          if (!isCrossingInk && cur <= surround - 4) {
+            out[rowOffset + x] = Math.max(cur, surround, paper);
           }
         }
       }
@@ -184,8 +204,8 @@ export function filterTextComponents(
   const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
   const compPixels: number[] = [];
-  const edgeMarginX = Math.max(4, Math.round(w * 0.02));
-  const edgeMarginY = Math.max(4, Math.round(h * 0.02));
+  const edgeMarginX = Math.max(2, Math.round(w * 0.004));
+  const edgeMarginY = Math.max(2, Math.round(h * 0.004));
 
   for (let startIdx = 0; startIdx < totalPixels; startIdx++) {
     if (visited[startIdx] || binary[startIdx] !== 0) continue;
@@ -241,12 +261,12 @@ export function filterTextComponents(
     if (area < 5 || (cw <= 2 && ch <= 2)) continue;
 
     // Reject massive solid blobs / desks / hands / shadows
-    if (area > totalPixels * 0.02) continue;
-    if (cw > w * 0.55 && ch > h * 0.18) continue;
-    if (ch > h * 0.38) continue;
+    if (area > totalPixels * 0.025) continue;
+    if (cw > w * 0.65 && ch > h * 0.22) continue;
+    if (ch > h * 0.42) continue;
 
     // Reject large edge-touching clutter (hands holding paper, desk edges, spiral coils)
-    if (touchesEdge && (ch > h * 0.14 || cw > w * 0.28 || area > totalPixels * 0.006)) {
+    if (touchesEdge && (ch > h * 0.18 || cw > w * 0.45 || area > totalPixels * 0.012)) {
       continue;
     }
 
@@ -291,12 +311,12 @@ export function cropDarkBordersAndMargins(
     };
   }
 
-  // Measure per-column and per-row bright-paper coverage (>= 175)
+  // Measure per-column and per-row paper coverage (>= 135 handles indoor shaded paper cleanly)
   const colBrightRatio = new Float32Array(w);
   for (let x = 0; x < w; x++) {
     let bright = 0;
     for (let y = 0; y < h; y += 2) {
-      if (gray[y * w + x] >= 175) bright++;
+      if (gray[y * w + x] >= 135) bright++;
     }
     colBrightRatio[x] = bright / Math.ceil(h / 2);
   }
@@ -306,51 +326,28 @@ export function cropDarkBordersAndMargins(
     let bright = 0;
     const rowOff = y * w;
     for (let x = 0; x < w; x += 2) {
-      if (gray[rowOff + x] >= 175) bright++;
+      if (gray[rowOff + x] >= 135) bright++;
     }
     rowBrightRatio[y] = bright / Math.ceil(w / 2);
   }
 
-  // Find longest contiguous horizontal paper span where colBrightRatio >= 0.58
-  let bestX0 = 0;
-  let bestX1 = w - 1;
-  let curStart = -1;
-  let bestLen = 0;
-
-  for (let x = 0; x < w; x++) {
-    if (colBrightRatio[x] >= 0.68) {
-      if (curStart === -1) curStart = x;
-      const len = x - curStart + 1;
-      if (len > bestLen) {
-        bestLen = len;
-        bestX0 = curStart;
-        bestX1 = x;
-      }
-    } else {
-      curStart = -1;
-    }
-  }
-
-  // Only crop horizontally if a clear page sheet exists (>= 30% width) and dark borders were present
+  // Trim ONLY dark outer margins inward from the frame edges so vertical ink columns
+  // or dark notebook margin rules inside the page can NEVER split/erase the text region.
   let x0 = 0;
   let x1 = w - 1;
-  if (bestLen >= w * 0.3 && bestLen <= w * 0.94) {
-    const padX = Math.max(4, Math.round(w * 0.01));
-    x0 = Math.min(w - 1, bestX0 + padX);
-    x1 = Math.max(x0 + 1, bestX1 - padX);
-  }
+  while (x0 < w * 0.28 && colBrightRatio[x0] < 0.35) x0++;
+  while (x1 > w * 0.72 && colBrightRatio[x1] < 0.35) x1--;
 
-  // Trim dark outer top/bottom scanner frames inside [x0..x1]
   let y0 = 0;
   let y1 = h - 1;
-  while (y0 < h * 0.25 && rowBrightRatio[y0] < 0.4) y0++;
-  while (y1 > h * 0.75 && rowBrightRatio[y1] < 0.4) y1--;
+  while (y0 < h * 0.28 && rowBrightRatio[y0] < 0.35) y0++;
+  while (y1 > h * 0.72 && rowBrightRatio[y1] < 0.35) y1--;
 
   const cropW = x1 - x0 + 1;
   const cropH = y1 - y0 + 1;
   const changed = cropW < w * 0.96 || cropH < h * 0.96;
 
-  if (!changed || cropW < 60 || cropH < 40) {
+  if (!changed || cropW < Math.max(60, w * 0.42) || cropH < Math.max(40, h * 0.42)) {
     return {
       data: new Uint8ClampedArray(gray),
       width: w,

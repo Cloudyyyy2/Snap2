@@ -273,6 +273,129 @@ export function warpPerspectiveQuad(
 }
 
 /**
+ * Warps a quadrilateral region in a 4-channel RGBA buffer into a flat top-down rectangle
+ * using an exact 8-DOF 3x3 planar projective homography and bilinear sub-pixel sampling.
+ */
+export function warpPerspectiveRgba(
+  rgba: Uint8ClampedArray,
+  w: number,
+  h: number,
+  quad: QuadCorners,
+  options: PerspectiveWarpOptions = {}
+): { data: Uint8ClampedArray; width: number; height: number; homography: number[] | null } {
+  const ordered = orderQuadCorners(quad);
+  const [tl, tr, br, bl] = ordered;
+
+  const topW = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+  const botW = Math.hypot(br.x - bl.x, br.y - bl.y);
+  const leftH = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+  const rightH = Math.hypot(br.x - tr.x, br.y - tr.y);
+
+  const dstW = Math.max(40, options.targetWidth ?? Math.round(Math.max(topW, botW)));
+  const dstH = Math.max(40, options.targetHeight ?? Math.round(Math.max(leftH, rightH)));
+
+  const out = new Uint8ClampedArray(dstW * dstH * 4);
+  // Default fill: white opaque (255, 255, 255, 255)
+  out.fill(255);
+
+  if (w < 2 || h < 2) {
+    return { data: out, width: dstW, height: dstH, homography: null };
+  }
+
+  const dstRect: QuadCorners = [
+    { x: 0, y: 0 },
+    { x: dstW - 1, y: 0 },
+    { x: dstW - 1, y: dstH - 1 },
+    { x: 0, y: dstH - 1 },
+  ];
+
+  const H = solveHomography(dstRect, ordered);
+
+  if (!H) {
+    // Degenerate fallback to bilinear surface interpolation
+    for (let dy = 0; dy < dstH; dy++) {
+      const v = dstH > 1 ? dy / (dstH - 1) : 0;
+      const lx = tl.x + (bl.x - tl.x) * v;
+      const ly = tl.y + (bl.y - tl.y) * v;
+      const rx = tr.x + (br.x - tr.x) * v;
+      const ry = tr.y + (br.y - tr.y) * v;
+      const dstOff = dy * dstW * 4;
+
+      for (let dx = 0; dx < dstW; dx++) {
+        const u = dstW > 1 ? dx / (dstW - 1) : 0;
+        const sx = lx + (rx - lx) * u;
+        const sy = ly + (ry - ly) * u;
+        const x0 = Math.floor(sx);
+        const y0 = Math.floor(sy);
+        if (x0 < 0 || x0 >= w - 1 || y0 < 0 || y0 >= h - 1) continue;
+
+        const fx = sx - x0;
+        const fy = sy - y0;
+        const c00 = (y0 * w + x0) * 4;
+        const c10 = (y0 * w + x0 + 1) * 4;
+        const c01 = ((y0 + 1) * w + x0) * 4;
+        const c11 = ((y0 + 1) * w + x0 + 1) * 4;
+        const pixDst = dstOff + dx * 4;
+
+        for (let c = 0; c < 4; c++) {
+          const top = rgba[c00 + c] + (rgba[c10 + c] - rgba[c00 + c]) * fx;
+          const bottom = rgba[c01 + c] + (rgba[c11 + c] - rgba[c01 + c]) * fx;
+          out[pixDst + c] = Math.round(top + (bottom - top) * fy);
+        }
+      }
+    }
+    return { data: out, width: dstW, height: dstH, homography: null };
+  }
+
+  const h0 = H[0];
+  const h1 = H[1];
+  const h2 = H[2];
+  const h3 = H[3];
+  const h4 = H[4];
+  const h5 = H[5];
+  const h6 = H[6];
+  const h7 = H[7];
+
+  for (let dy = 0; dy < dstH; dy++) {
+    const rowNumX = h1 * dy + h2;
+    const rowNumY = h4 * dy + h5;
+    const rowDen = h7 * dy + 1;
+    const dstOff = dy * dstW * 4;
+
+    for (let dx = 0; dx < dstW; dx++) {
+      const denom = h6 * dx + rowDen;
+      if (Math.abs(denom) < 1e-7) continue;
+
+      const sx = (h0 * dx + rowNumX) / denom;
+      const sy = (h3 * dx + rowNumY) / denom;
+
+      const x0 = Math.floor(sx);
+      const y0 = Math.floor(sy);
+      if (x0 < 0 || x0 >= w - 1 || y0 < 0 || y0 >= h - 1) continue;
+
+      const fx = sx - x0;
+      const fy = sy - y0;
+      const row0 = y0 * w;
+      const row1 = (y0 + 1) * w;
+      const c00 = (row0 + x0) * 4;
+      const c10 = (row0 + x0 + 1) * 4;
+      const c01 = (row1 + x0) * 4;
+      const c11 = (row1 + x0 + 1) * 4;
+      const pixDst = dstOff + dx * 4;
+
+      for (let c = 0; c < 4; c++) {
+        const top = rgba[c00 + c] + (rgba[c10 + c] - rgba[c00 + c]) * fx;
+        const bottom = rgba[c01 + c] + (rgba[c11 + c] - rgba[c01 + c]) * fx;
+        out[pixDst + c] = Math.round(top + (bottom - top) * fy);
+      }
+    }
+  }
+
+  return { data: out, width: dstW, height: dstH, homography: H };
+}
+
+
+/**
  * Robustly fits a line y = m*x + b (or x = m*y + b when vertical=true) using 2-pass trimmed least squares.
  */
 function fitTrimmedLine(
@@ -479,7 +602,18 @@ export function detectDocumentQuad(
 
   const spanW = Math.max(cTR.x - cTL.x, cBR.x - cBL.x);
   const spanH = Math.max(cBL.y - cTL.y, cBR.y - cTR.y);
-  if (spanW < w * 0.3 || spanH < h * 0.3) return null;
+  if (spanW < w * 0.42 || spanH < h * 0.42) return null;
+
+  const quadArea =
+    0.5 *
+    Math.abs(
+      cTL.x * cTR.y -
+        cTR.x * cTL.y +
+        (cTR.x * cBR.y - cBR.x * cTR.y) +
+        (cBR.x * cBL.y - cBL.x * cBR.y) +
+        (cBL.x * cTL.y - cTL.x * cBL.y)
+    );
+  if (quadArea < w * h * 0.25) return null;
 
   // Trigger only when genuine keystone taper or edge tilt (>= 2.5% of frame dimension) is present
   const leftSkew = Math.abs(cTL.x - cBL.x);
@@ -512,7 +646,7 @@ export function estimateSkewAngle(
 ): number {
   if (w < 40 || h < 40) return 0;
 
-  const maxAngle = options.maxAngleDeg ?? 18;
+  const maxAngle = options.maxAngleDeg ?? 28;
   const coarseStep = options.coarseStepDeg ?? 0.5;
   const fineStep = options.fineStepDeg ?? 0.1;
 

@@ -345,4 +345,86 @@ describe('handwriting image cleanup & segmentation', () => {
     expect(regions.length).toBe(2);
     expect(regions[0].x1).toBeLessThan(regions[1].x0);
   });
+
+  it('cropDarkBordersAndMargins preserves central text even when an interior vertical rule or dense column lowers middle column brightness', async () => {
+    const { cropDarkBordersAndMargins } = await import(
+      '../../src/lib/ocr/handwriting/cleanup'
+    );
+    const w = 320;
+    const h = 220;
+    // Outer desk border (35) around shaded indoor paper (175)
+    const gray = new Uint8ClampedArray(w * h).fill(35);
+    for (let y = 20; y < 200; y++) {
+      for (let x = 24; x < 296; x++) {
+        gray[y * w + x] = 175;
+      }
+    }
+    // Vertical notebook margin line / heavy stroke column at x=120..124 splitting the sheet
+    for (let y = 22; y < 198; y++) {
+      for (let x = 120; x <= 124; x++) {
+        gray[y * w + x] = 45;
+      }
+    }
+    // Dense writing block on the right side (x=145..260, y=50..160)
+    for (let y = 50; y < 160; y++) {
+      for (let x = 145; x < 260; x++) {
+        if ((y % 18) < 10) gray[y * w + x] = 28;
+      }
+    }
+
+    const res = cropDarkBordersAndMargins(gray, w, h);
+    expect(res.cropped).toBe(true);
+    // Must keep both sides of the interior rule (width close to sheet width 272px, never cropped to just blank left margin)
+    expect(res.width).toBeGreaterThanOrEqual(250);
+    expect(res.bounds.x0).toBeLessThanOrEqual(30);
+    expect(res.bounds.x1).toBeGreaterThanOrEqual(285);
+  });
+
+  it('segmentWords detects individual word edges and fits each word into a square box', async () => {
+    const { segmentWords, cropToSquare } = await import(
+      '../../src/lib/ocr/handwriting/cleanup'
+    );
+    const w = 360;
+    const h = 140;
+    const binary = new Uint8ClampedArray(w * h).fill(255);
+
+    // Line 1: Word 1 "BUY" at x=20..75, y=30..55; Word 2 "MILK" at x=110..185, y=30..55
+    for (let y = 30; y <= 55; y++) {
+      for (let x = 20; x <= 75; x++) binary[y * w + x] = 0;
+      for (let x = 110; x <= 185; x++) binary[y * w + x] = 0;
+    }
+
+    // Line 2: Word 3 "CALL" at x=25..95, y=85..110; Word 4 "NOW" at x=140..210, y=85..110
+    for (let y = 85; y <= 110; y++) {
+      for (let x = 25; x <= 95; x++) binary[y * w + x] = 0;
+      for (let x = 140; x <= 210; x++) binary[y * w + x] = 0;
+    }
+
+    const words = segmentWords(binary, w, h);
+    expect(words.length).toBe(4);
+
+    // Word 1 checks
+    expect(words[0].x0).toBe(20);
+    expect(words[0].x1).toBe(75);
+    expect(words[0].y0).toBe(30);
+    expect(words[0].y1).toBe(55);
+
+    // Word 1 squareBox must be an exact square
+    const sq1 = words[0].squareBox;
+    expect(sq1.size).toBeGreaterThanOrEqual(words[0].x1 - words[0].x0 + 1);
+    expect(sq1.x1 - sq1.x0 + 1).toBe(sq1.size);
+    expect(sq1.y1 - sq1.y0 + 1).toBe(sq1.size);
+
+    // cropToSquare must produce a square Uint8ClampedArray with centered ink and white padding
+    const gray = new Uint8ClampedArray(binary);
+    const croppedSq = cropToSquare(gray, w, h, words[0], 128);
+    expect(croppedSq.size).toBe(128);
+    expect(croppedSq.data.length).toBe(128 * 128);
+
+    // Center pixel should be ink (0), corner pixel should be paper padding (255)
+    const midIdx = 64 * 128 + 64;
+    expect(croppedSq.data[midIdx]).toBe(0);
+    expect(croppedSq.data[0]).toBe(255);
+  });
 });
+
