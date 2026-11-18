@@ -28,14 +28,33 @@ export type BrowserOcrProfile = 'auto' | 'printed' | 'handwriting';
 
 let trocrPipelinePromise: Promise<any> | null = null;
 
+function isMobileBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent || ''
+  );
+}
+
 async function getBrowserTrOcrPipeline(onProgress?: (msg: string) => void) {
   if (!trocrPipelinePromise) {
-    onProgress?.('Loading in-browser TrOCR handwriting model (cached locally after first load)...');
+    const mobile = isMobileBrowser();
+    const modelId = mobile
+      ? 'Xenova/trocr-small-handwritten'
+      : 'Xenova/trocr-base-handwritten';
+    onProgress?.(
+      mobile
+        ? 'Loading compact in-browser TrOCR model (mobile-optimized)...'
+        : 'Loading in-browser TrOCR handwriting model (cached locally after first load)...'
+    );
     trocrPipelinePromise = (async () => {
       const { pipeline, env } = await import('@huggingface/transformers');
       env.allowRemoteModels = true;
       env.allowLocalModels = false;
-      return pipeline('image-to-text', 'Xenova/trocr-base-handwritten', {
+      // Single-threaded WASM avoids multiplying ONNX heap memory across threads on mobile/browser tabs
+      if (env.backends?.onnx?.wasm) {
+        env.backends.onnx.wasm.numThreads = 1;
+      }
+      return pipeline('image-to-text', modelId, {
         dtype: 'q8',
       });
     })().catch((err) => {
@@ -46,7 +65,7 @@ async function getBrowserTrOcrPipeline(onProgress?: (msg: string) => void) {
   return trocrPipelinePromise;
 }
 
-async function decodeImageToGrayscale(dataUrl: string, maxWidth = 1400): Promise<{
+async function decodeImageToGrayscale(dataUrl: string, maxWidth = 960): Promise<{
   gray: Uint8ClampedArray;
   width: number;
   height: number;
@@ -204,7 +223,9 @@ export async function runBrowserLocalOcr(params: {
       params.onProgress?.(`Recognizing ${lineBoxes.length} handwritten lines in browser...`);
       const rawResults: Array<{ text: string; confidence: number; bbox: any }> = [];
 
-      for (const box of lineBoxes) {
+      for (let lineIdx = 0; lineIdx < lineBoxes.length; lineIdx++) {
+        const box = lineBoxes[lineIdx];
+        params.onProgress?.(`Recognizing line ${lineIdx + 1} of ${lineBoxes.length}...`);
         const chunks = splitWideLineBox(closedForSeg, w, h, box, 6.5);
         const chunkTexts: string[] = [];
         for (const chunkBox of chunks) {
@@ -213,7 +234,7 @@ export async function runBrowserLocalOcr(params: {
           const lineUrl = grayscaleToDataUrl(deslanted.data, deslanted.width, deslanted.height);
           if (!lineUrl) continue;
           const out = await rec(lineUrl, {
-            num_beams: 4,
+            num_beams: isMobileBrowser() ? 2 : 4,
             max_new_tokens: 64,
             early_stopping: true,
           });
@@ -221,6 +242,7 @@ export async function runBrowserLocalOcr(params: {
           if (typeof first?.generated_text === 'string' && first.generated_text.trim()) {
             chunkTexts.push(first.generated_text.trim());
           }
+          await new Promise((r) => setTimeout(r, 0));
         }
         const joined = chunkTexts.join(' ').trim();
         if (joined) {
