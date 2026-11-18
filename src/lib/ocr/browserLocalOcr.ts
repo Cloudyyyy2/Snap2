@@ -50,9 +50,10 @@ async function getBrowserTrOcrPipeline(onProgress?: (msg: string) => void) {
       const { pipeline, env } = await import('@huggingface/transformers');
       env.allowRemoteModels = true;
       env.allowLocalModels = false;
-      // Single-threaded WASM avoids multiplying ONNX heap memory across threads on mobile/browser tabs
+      // Single-threaded, non-proxied WASM avoids COOP/COEP & worker memory issues on GitHub Pages / mobile
       if (env.backends?.onnx?.wasm) {
         env.backends.onnx.wasm.numThreads = 1;
+        env.backends.onnx.wasm.proxy = false;
       }
       return pipeline('image-to-text', modelId, {
         dtype: 'q8',
@@ -257,12 +258,11 @@ export async function runBrowserLocalOcr(params: {
         bbox: l.bbox || { x0: 0, y0: 0, x1: w, y1: h },
       }));
       text = lines.map((l) => l.text).join('\n');
-    } catch {
-      params.onProgress?.('Falling back to in-browser Tesseract OCR...');
-      recognizer = 'tesseract-host';
-      const printed = await recognizePrintedInBrowser(contrastGray, w, h);
-      text = printed.text;
-      lines = printed.lines;
+    } catch (trocrErr: any) {
+      const reason = trocrErr?.message || String(trocrErr);
+      throw new Error(
+        `In-browser handwriting model failed to load (${reason}). Please check your internet connection for first-time model download or use Printed mode.`
+      );
     }
   } else {
     params.onProgress?.('Running in-browser Tesseract OCR...');
