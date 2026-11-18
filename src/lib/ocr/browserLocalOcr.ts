@@ -366,10 +366,10 @@ export async function runBrowserLocalOcr(params: {
             appliedSteps.push('auto-crosscheck-trocr');
           }
         } catch (trocrErr: any) {
-          if (!printed.text.trim()) {
+          if (!printed.text.trim() || printedErratic || printedQuality < 0.72) {
             const reason = trocrErr?.message || String(trocrErr);
             throw new Error(
-              `In-browser handwriting model failed to load (${reason}). Please check your internet connection for first-time model download or use Printed mode.`
+              `In-browser handwriting model failed to load (${reason}). Please check your internet connection for first-time model download or switch to Vision AI.`
             );
           }
         }
