@@ -1041,7 +1041,8 @@ export async function processImageWithLocalOcr(params: {
   }
 
   // AUTO MODE (Single-Region or Single-Engine Fallback) with Bidirectional Cross-Check + Line-Level Hybrid Recovery
-  if (!detection.isHandwriting && printedModelReady) {
+  const lineBoxesForCheck = getOrderedLineBoxesForRegions(regions);
+  if (!detection.isHandwriting && printedModelReady && ocrProfile !== 'handwriting' && lineBoxesForCheck.length < 6) {
     const printed = await runOfflinePrintedOnBoxes(regions);
     const printedPlaus = scoreTextPlausibility(printed.text, printed.qualityScore);
 
