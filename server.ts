@@ -493,7 +493,7 @@ const isProd = process.env.NODE_ENV === 'production';
 
 if (!isProd) {
   const vite = await createViteServer({
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, allowedHosts: true },
     appType: 'spa',
   });
   app.use(vite.middlewares);
@@ -506,6 +506,16 @@ if (!isProd) {
 }
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-app.listen(port, '0.0.0.0', () => {
-  console.log(`SnapRemind server running at http://0.0.0.0:${port}`);
+const localUrl =
+  process.env.APP_URL && !process.env.APP_URL.includes('MY_APP_URL')
+    ? process.env.APP_URL
+    : `http://localhost:${port}`;
+const cloudflareUrl = process.env.CLOUDFLARE_URL || '';
+
+app.listen(port, () => {
+  console.log('SnapRemind server running:');
+  console.log(`  Local:      ${localUrl}`);
+  if (cloudflareUrl) {
+    console.log(`  Cloudflare: ${cloudflareUrl}`);
+  }
 });
