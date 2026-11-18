@@ -102,16 +102,56 @@ async function downloadTessdataFull() {
   console.log(`[done] tessdata/eng.traineddata (${rawMb} MB raw / ${gzMb} MB gz)`);
 }
 
+async function downloadParseqModel() {
+  const parseqDir = path.resolve(process.cwd(), 'public/models/parseq');
+  const files = [
+    {
+      rel: 'config.json',
+      url: 'https://huggingface.co/Felix92/onnxtr-parseq/raw/main/config.json',
+    },
+    {
+      rel: 'model.onnx',
+      url: 'https://huggingface.co/Felix92/onnxtr-parseq/resolve/main/model.onnx',
+    },
+  ];
+
+  for (const item of files) {
+    const dest = path.join(parseqDir, item.rel);
+    if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+      console.log(`[skip] parseq/${item.rel} already exists`);
+      continue;
+    }
+
+    fs.mkdirSync(parseqDir, { recursive: true });
+    console.log(`[download] ${item.url}`);
+    const response = await fetch(item.url, { redirect: 'follow' });
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `Failed to download parseq/${item.rel}: HTTP ${response.status} ${response.statusText}`
+      );
+    }
+
+    const tmpDest = `${dest}.tmp`;
+    const fileStream = fs.createWriteStream(tmpDest);
+    await pipeline(Readable.fromWeb(response.body), fileStream);
+    fs.renameSync(tmpDest, dest);
+
+    const sizeMb = (fs.statSync(dest).size / (1024 * 1024)).toFixed(2);
+    console.log(`[done] parseq/${item.rel} (${sizeMb} MB)`);
+  }
+}
+
 async function main() {
-  console.log(`Downloading ${MODEL_REPO} (quantized ONNX) to ${TARGET_DIR}...`);
+  console.log(`Downloading ${MODEL_REPO} (quantized ONNX) + PARSeq to ${TARGET_DIR}...`);
   for (const file of FILES) {
     await downloadFile(file);
   }
 
+  await downloadParseqModel();
   await downloadTessdataFull();
 
   console.log(
-    `Offline OCR models (${TARGET_DIR_NAME} + tessdata_full) ready.`
+    `Offline OCR models (${TARGET_DIR_NAME} + parseq + tessdata_full) ready.`
   );
 }
 

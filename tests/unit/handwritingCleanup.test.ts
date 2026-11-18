@@ -4,7 +4,7 @@ import {
   removeRuledLines,
   binarizeSauvola,
 } from '../../src/lib/ocr/handwriting/cleanup';
-import { segmentLines, splitWideLineBox } from '../../src/lib/ocr/handwriting/lines';
+import { segmentLines } from '../../src/lib/ocr/handwriting/lines';
 import { detectHandwriting } from '../../src/lib/ocr/handwriting/detect';
 import { postprocessHandwrittenLines } from '../../src/lib/ocr/postprocess';
 
@@ -427,69 +427,140 @@ describe('handwriting image cleanup & segmentation', () => {
     expect(croppedSq.data[0]).toBe(255);
   });
 
-  it('segmentLines preserves ascenders and descenders with generous margins and splitWideLineBox avoids mid-ligature slicing', () => {
+  it('filterTextComponents strips periodic margin spiral coils and dark footer bars while keeping handwriting', async () => {
+    const { filterTextComponents } = await import('../../src/lib/ocr/handwriting/cleanup');
+    const w = 320;
+    const h = 240;
+    const bin = new Uint8ClampedArray(w * h).fill(255);
+
+    // 6 periodic spiral-binding coil loops along left margin (x=8..20, pitch 34px)
+    for (const cy of [20, 54, 88, 122, 156, 190]) {
+      for (let y = cy; y < cy + 12; y++) {
+        for (let x = 8; x <= 20; x++) {
+          bin[y * w + x] = 0;
+        }
+      }
+    }
+
+    // Dark horizontal bottom watermark bar touching bottom edge (width > 0.5*w)
+    for (let y = 233; y < h; y++) {
+      for (let x = 35; x <= 285; x++) {
+        bin[y * w + x] = 0;
+      }
+    }
+
+    // Interior handwriting words away from spiral coil continuation
+    for (let y = 70; y <= 84; y++) {
+      for (let x = 80; x <= 170; x++) bin[y * w + x] = 0;
+    }
+    for (let y = 135; y <= 150; y++) {
+      for (let x = 85; x <= 185; x++) bin[y * w + x] = 0;
+    }
+
+    const filtered = filterTextComponents(bin, w, h);
+
+    // Spiral coils & bottom watermark bar are stripped
+    expect(filtered[26 * w + 14]).toBe(255);
+    expect(filtered[94 * w + 14]).toBe(255);
+    expect(filtered[236 * w + 160]).toBe(255);
+
+    // Interior handwriting ink is preserved
+    expect(filtered[77 * w + 120]).toBe(0);
+    expect(filtered[142 * w + 130]).toBe(0);
+  });
+
+  it('segmentLines caps vertical padding at midpoint valleys so tightly spaced lines never overlap', () => {
     const w = 320;
     const h = 200;
     const bin = new Uint8ClampedArray(w * h).fill(255);
 
-    // Line 1: baseline at y = 50, x-height at y = 35..50
-    // descenders (g, p, y) hanging down to y = 72
-    for (let x = 40; x < 280; x++) {
-      if (x % 20 < 14) {
-        for (let y = 38; y <= 50; y++) bin[y * w + x] = 0;
-      }
-    }
-    // Descender loops for line 1
-    for (const descX of [70, 130, 190, 250]) {
-      for (let y = 50; y <= 72; y++) {
-        bin[y * w + descX] = 0;
-      }
-    }
-
-    // Line 2: baseline at y = 140, x-height at y = 125..140
-    // ascenders (f, l, h) rising up to y = 100
-    for (let x = 40; x < 280; x++) {
-      if (x % 20 < 14) {
-        for (let y = 128; y <= 140; y++) bin[y * w + x] = 0;
-      }
-    }
-    // Ascender stems for line 2
-    for (const ascX of [60, 120, 180, 240]) {
-      for (let y = 100; y <= 128; y++) {
-        bin[y * w + ascX] = 0;
+    // 3 tightly spaced lines at y=45, y=80, y=115 (13px tall each)
+    for (const cy of [45, 80, 115]) {
+      for (let y = cy - 6; y <= cy + 6; y++) {
+        for (let x = 60; x <= 260; x++) {
+          if (x % 16 < 11) bin[y * w + x] = 0;
+        }
       }
     }
 
     const boxes = segmentLines(bin, w, h);
-    expect(boxes.length).toBe(2);
+    expect(boxes.length).toBe(3);
+    expect(boxes[0].y1).toBeLessThan(boxes[1].y0);
+    expect(boxes[1].y1).toBeLessThan(boxes[2].y0);
+  });
 
-    // Line 1 box must capture the descenders (down to y=72)
-    expect(boxes[0].y1).toBeGreaterThanOrEqual(72);
+  it('deslantGrayscale estimates and straightens forward-slanted handwriting strokes', async () => {
+    const { deslantGrayscale } = await import('../../src/lib/ocr/handwriting/cleanup');
+    const w = 96;
+    const h = 48;
+    const gray = new Uint8ClampedArray(w * h).fill(255);
 
-    // Line 2 box must capture the ascenders (up to y=100)
-    expect(boxes[1].y0).toBeLessThanOrEqual(100);
-
-    // Test continuous cursive wide word without internal whitespace gaps
-    const wideW = 600;
-    const wideH = 50;
-    const continuousWord = new Uint8ClampedArray(wideW * wideH).fill(255);
-    // Continuous baseline ligature across the entire 500px span
-    for (let x = 50; x < 550; x++) {
-      continuousWord[35 * wideW + x] = 0; // baseline ligature
-      // Letters with varying heights
-      if (x % 25 < 18) {
-        for (let y = 20; y <= 35; y++) continuousWord[y * wideW + x] = 0;
+    // Draw slanted strokes leaning rightward toward top (+20 deg shear)
+    for (const baseX of [24, 48, 72]) {
+      for (let y = 8; y <= 38; y++) {
+        const cx = Math.round(baseX - (y - 23) * 0.36);
+        for (let dx = -1; dx <= 1; dx++) {
+          gray[y * w + cx + dx] = 15;
+        }
       }
     }
 
-    const continuousChunks = splitWideLineBox(
-      continuousWord,
-      wideW,
-      wideH,
-      { x0: 50, y0: 15, x1: 550, y1: 45 },
-      6.5
+    const res = deslantGrayscale(gray, w, h);
+    expect(res.corrected).toBe(true);
+    expect(Math.abs(res.slantDeg)).toBeGreaterThanOrEqual(8);
+  });
+
+  it('stripLineEdgeBleeds keeps thin right-edge letter stems near words while dropping isolated top-edge bleeds', async () => {
+    const { stripLineEdgeBleeds, segmentHandwrittenWordsInLine } = await import(
+      '../../src/lib/ocr/handwriting/lines'
     );
-    expect(continuousChunks.length).toBeGreaterThanOrEqual(1);
+    const w = 140;
+    const h = 44;
+    const bin = new Uint8ClampedArray(w * h).fill(255);
+    const gray = new Uint8ClampedArray(w * h).fill(255);
+
+    // Isolated top-edge descender bleed from previous line at x=2..4, y=0..24
+    for (let y = 0; y <= 24; y++) {
+      for (let x = 2; x <= 4; x++) {
+        bin[y * w + x] = 0;
+        gray[y * w + x] = 30;
+      }
+    }
+
+    // Core word glyphs at x=28..120, y=10..34 with faint gray bridge across x=68..75
+    for (let y = 10; y <= 34; y++) {
+      for (let x = 28; x <= 67; x++) {
+        bin[y * w + x] = 0;
+        gray[y * w + x] = 25;
+      }
+      for (let x = 68; x <= 75; x++) {
+        gray[y * w + x] = 195; // faint pen stroke missed by binary threshold
+      }
+      for (let x = 76; x <= 120; x++) {
+        bin[y * w + x] = 0;
+        gray[y * w + x] = 25;
+      }
+      // Thin right-edge letter stem ('i') only 5px from main word
+      if (y >= 12 && y <= 32) {
+        for (let x = 125; x <= 128; x++) {
+          bin[y * w + x] = 0;
+          gray[y * w + x] = 25;
+        }
+      }
+    }
+
+    const box = { x0: 0, y0: 0, x1: w - 1, y1: h - 1 };
+    const { mask } = stripLineEdgeBleeds(bin, w, h, box);
+    // Isolated top-edge bleed dropped
+    expect(mask[10 * w + 3]).toBe(255);
+    // Right-edge letter stem preserved
+    expect(mask[20 * w + 126]).toBe(0);
+
+    // Faint gray stroke bridges x=67..76 so the entire word stays one crop
+    const crops = segmentHandwrittenWordsInLine(bin, gray, w, h, box, 2);
+    expect(crops.length).toBe(1);
+    expect(crops[0].box.x0).toBe(28);
+    expect(crops[0].box.x1).toBe(128);
   });
 });
 

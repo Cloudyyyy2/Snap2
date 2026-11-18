@@ -14,6 +14,7 @@ import {
 } from './server/handwritingRecognizer';
 import { isPrintedModelAvailable, getActivePrintedModelName } from './server/printedRecognizer';
 import { parseReminderLocally } from './server/localReminderParser';
+import { ensureOfflineModels, getModelProvisioningStatus } from './server/modelManager';
 
 const require = createRequire(import.meta.url);
 const webpush = require('web-push') as typeof webpushType;
@@ -82,9 +83,29 @@ app.get('/api/config', (_req, res) => {
 app.get('/api/local-ocr/status', (_req, res) => {
   const hwName = getActiveHandwritingModelName();
   const printedName = getActivePrintedModelName();
+  const hwReady = isHandwritingModelAvailable();
+  const prReady = isPrintedModelAvailable();
+  const prov = getModelProvisioningStatus();
+
+  const handwritingModel = hwReady
+    ? 'ready'
+    : prov.handwritingModelState === 'downloading'
+      ? 'downloading'
+      : 'missing';
+  const printedModel = prReady
+    ? 'ready'
+    : prov.printedModelState === 'downloading'
+      ? 'downloading'
+      : 'missing';
+
   res.json({
-    handwritingModel: isHandwritingModelAvailable() ? 'ready' : 'missing',
-    printedModel: isPrintedModelAvailable() ? 'ready' : 'missing',
+    handwritingModel,
+    printedModel,
+    handwritingModelState: hwReady ? 'ready' : prov.handwritingModelState,
+    printedModelState: prReady ? 'ready' : prov.printedModelState,
+    downloadProgress: prov.downloadProgress,
+    currentFile: prov.currentFile,
+    downloadError: prov.error,
     handwritingModelId: hwName,
     printedModelId: printedName,
     modelId: `${hwName}+${printedName}`,
@@ -96,7 +117,7 @@ app.get('/api/local-ocr/status', (_req, res) => {
 
 app.post('/api/local-ocr', async (req, res) => {
   try {
-    const { image, ocrProfile, exportStages } = req.body || {};
+    const { image, ocrProfile, exportStages, prompt } = req.body || {};
     if (!image || typeof image !== 'string') {
       return res.status(400).json({
         success: false,
@@ -109,6 +130,20 @@ app.post('/api/local-ocr', async (req, res) => {
         ? ocrProfile
         : 'auto';
 
+    if (process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
+      if (validProfile !== 'printed' && !isHandwritingModelAvailable()) {
+        await ensureOfflineModels({
+          includeHandwriting: true,
+          includePrinted: validProfile === 'auto',
+        });
+      } else if (validProfile === 'printed' && !isPrintedModelAvailable()) {
+        await ensureOfflineModels({
+          includeHandwriting: false,
+          includePrinted: true,
+        });
+      }
+    }
+
     const imageBuffer = decodeBase64Image(image);
     const result = await processImageWithLocalOcr({
       imageBuffer,
@@ -116,9 +151,20 @@ app.post('/api/local-ocr', async (req, res) => {
       exportStages: exportStages !== false,
     });
 
+    const deterministicData = result.text.trim()
+      ? parseReminderLocally(
+          result.text,
+          typeof prompt === 'string' ? prompt : undefined,
+          result.detectedStyle === 'handwriting' || result.detectedStyle === 'mixed'
+            ? ['handwritten']
+            : ['ocr']
+        )
+      : undefined;
+
     res.json({
       success: true,
       ...result,
+      data: deterministicData,
     });
   } catch (error: any) {
     console.error('Error running local OCR:', error);
@@ -514,5 +560,17 @@ app.listen(port, () => {
   console.log(`  Local:      ${localUrl}`);
   if (cloudflareUrl) {
     console.log(`  Cloudflare: ${cloudflareUrl}`);
+  }
+
+  if (process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
+    ensureOfflineModels()
+      .then((s) => {
+        console.log(
+          `Offline OCR models ready (handwriting=${s.handwritingModelState}, printed=${s.printedModelState}).`
+        );
+      })
+      .catch((err) => {
+        console.warn('Background offline OCR model provisioning error:', err?.message || err);
+      });
   }
 });

@@ -828,17 +828,10 @@ export function correctDocumentPerspective(
 }
 
 export interface DeslantOptions {
-  /** Minimum slant search angle in degrees. Default: -35 */
-  minAngleDeg?: number;
-  /** Maximum slant search angle in degrees. Default: +45 */
-  maxAngleDeg?: number;
-  /** Coarse search step in degrees. Default: 2.0 */
-  coarseStepDeg?: number;
-  /** Fine refinement step in degrees. Default: 0.5 */
-  fineStepDeg?: number;
-  /** Minimum slant angle magnitude to apply transformation. Default: 2.5 */
+  maxSlantDeg?: number;
+  stepDeg?: number;
   minCorrectionDeg?: number;
-  /** Background fill intensity for exposed margins (0-255). Default: 255 */
+  inkThreshold?: number;
   backgroundFill?: number;
 }
 
@@ -846,205 +839,159 @@ export interface DeslantResult {
   data: Uint8ClampedArray;
   width: number;
   height: number;
-  angleDeg: number;
-  deslanted: boolean;
-  affineMatrix: number[];
+  slantDeg: number;
+  corrected: boolean;
 }
 
 /**
- * Estimates cursive handwriting slant angle (leaning of vertical strokes) using
- * projection profile variance maximization over candidate shear angles (Vinciarelli-Luettin method).
- *
- * @param binary Binarized text mask (0 = ink, 255 = paper)
- * @param w Width in pixels
- * @param h Height in pixels
- * @param options Slant search configuration options
- * @returns Estimated slant angle in degrees (positive = forward/right leaning). Returns 0 if upright.
- */
-export function estimateCursiveSlantAngle(
-  binary: Uint8ClampedArray,
-  w: number,
-  h: number,
-  options: DeslantOptions = {}
-): number {
-  if (w <= 0 || h <= 0 || binary.length < w * h) return 0;
-
-  // Collect ink pixel coordinates
-  const inkPoints: Array<{ x: number; y: number }> = [];
-  for (let y = 0; y < h; y++) {
-    const rowOff = y * w;
-    for (let x = 0; x < w; x++) {
-      if (binary[rowOff + x] === 0) {
-        inkPoints.push({ x, y });
-      }
-    }
-  }
-
-  // Not enough ink strokes to determine slant reliably
-  if (inkPoints.length < 20) return 0;
-
-  const minAngle = options.minAngleDeg ?? -35;
-  const maxAngle = options.maxAngleDeg ?? 45;
-  const coarseStep = options.coarseStepDeg ?? 2.0;
-  const fineStep = options.fineStepDeg ?? 0.5;
-  const minCorrection = options.minCorrectionDeg ?? 2.5;
-
-  const evalAngle = (thetaDeg: number): number => {
-    const rad = (thetaDeg * Math.PI) / 180;
-    const s = Math.tan(rad);
-    const extraW = Math.ceil(Math.abs(s) * (h - 1));
-    const wNew = w + extraW;
-    const xOffset = s > 0 ? s * (h - 1) : 0;
-    const hist = new Float64Array(wNew);
-
-    for (let i = 0; i < inkPoints.length; i++) {
-      const pt = inkPoints[i];
-      const col = Math.round(pt.x - s * (h - 1 - pt.y) + xOffset);
-      if (col >= 0 && col < wNew) {
-        hist[col]++;
-      }
-    }
-
-    let score = 0;
-    for (let c = 0; c < wNew; c++) {
-      const val = hist[c];
-      score += val * val;
-      if (c + 1 < wNew) {
-        score += 0.35 * val * hist[c + 1];
-      }
-    }
-    return score;
-  };
-
-  // Coarse pass
-  let bestAngle = 0;
-  let maxScore = -1;
-  for (let a = minAngle; a <= maxAngle; a += coarseStep) {
-    const score = evalAngle(a);
-    if (score > maxScore) {
-      maxScore = score;
-      bestAngle = a;
-    }
-  }
-
-  // Fine refinement pass
-  const fineStart = Math.max(minAngle, bestAngle - coarseStep);
-  const fineEnd = Math.min(maxAngle, bestAngle + coarseStep);
-  for (let a = fineStart; a <= fineEnd; a += fineStep) {
-    const score = evalAngle(a);
-    if (score > maxScore) {
-      maxScore = score;
-      bestAngle = a;
-    }
-  }
-
-  if (Math.abs(bestAngle) < minCorrection) {
-    return 0;
-  }
-
-  return Math.round(bestAngle * 10) / 10;
-}
-
-/**
- * Applies horizontal affine shear transformation to normalize cursive stroke slant
- * without character clipping via dynamic non-clipping width expansion and horizontal bilinear interpolation.
- *
- * @param gray Input grayscale buffer (0 = dark ink, 255 = white paper)
- * @param w Image width
- * @param h Image height
- * @param angleDeg Slant angle in degrees (positive = forward/right leaning)
- * @param backgroundFill Background intensity fill for exposed margins (0..255, default 255)
- */
-export function shearGrayscale(
-  gray: Uint8ClampedArray,
-  w: number,
-  h: number,
-  angleDeg: number,
-  backgroundFill = 255
-): { data: Uint8ClampedArray; width: number; height: number; affineMatrix: number[] } {
-  if (Math.abs(angleDeg) < 0.05 || w <= 0 || h <= 0) {
-    return {
-      data: new Uint8ClampedArray(gray),
-      width: w,
-      height: h,
-      affineMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
-    };
-  }
-
-  const rad = (angleDeg * Math.PI) / 180;
-  const s = Math.tan(rad);
-  const extraW = Math.ceil(Math.abs(s) * (h - 1));
-  const wNew = w + extraW;
-  const xOffset = s > 0 ? s * (h - 1) : 0;
-
-  const out = new Uint8ClampedArray(wNew * h).fill(backgroundFill);
-
-  // Inverse mapping: dx, dy -> sx, sy
-  for (let dy = 0; dy < h; dy++) {
-    const rowDst = dy * wNew;
-    const rowSrc = dy * w;
-    const sTerm = s * (h - 1 - dy) - xOffset;
-
-    for (let dx = 0; dx < wNew; dx++) {
-      const sx = dx + sTerm;
-      if (sx >= 0 && sx <= w - 1) {
-        const x0 = Math.floor(sx);
-        const fx = sx - x0;
-        if (x0 + 1 < w) {
-          const v0 = gray[rowSrc + x0];
-          const v1 = gray[rowSrc + x0 + 1];
-          out[rowDst + dx] = Math.round(v0 + (v1 - v0) * fx);
-        } else {
-          out[rowDst + dx] = gray[rowSrc + x0];
-        }
-      }
-    }
-  }
-
-  const affineMatrix = [1, s, -s * (h - 1) + xOffset, 0, 1, 0, 0, 0, 1];
-  return {
-    data: out,
-    width: wNew,
-    height: h,
-    affineMatrix,
-  };
-}
-
-/**
- * Normalizes cursive slant on a grayscale document crop using projection-profile slant estimation
- * and horizontal shear transformation without character clipping.
+ * Estimates cursive/handwritten slant angle (-25° to +25°) by maximizing vertical
+ * column ink concentration under horizontal shear, then applies bilinear shear
+ * deslanting so upright stems align vertically for TrOCR recognition.
  */
 export function deslantGrayscale(
   gray: Uint8ClampedArray,
-  binary: Uint8ClampedArray,
   w: number,
   h: number,
   options: DeslantOptions = {}
 ): DeslantResult {
-  const minCorrection = options.minCorrectionDeg ?? 2.5;
-  const angleDeg = estimateCursiveSlantAngle(binary, w, h, options);
-
-  if (Math.abs(angleDeg) < minCorrection) {
+  if (w < 8 || h < 8) {
     return {
       data: new Uint8ClampedArray(gray),
       width: w,
       height: h,
-      angleDeg: 0,
-      deslanted: false,
-      affineMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      slantDeg: 0,
+      corrected: false,
     };
   }
 
+  const maxSlant = options.maxSlantDeg ?? 25;
+  const stepDeg = options.stepDeg ?? 2.5;
+  const minCorrection = options.minCorrectionDeg ?? 3.0;
+  const inkThreshold = options.inkThreshold ?? 175;
   const fill = options.backgroundFill ?? 255;
-  const sheared = shearGrayscale(gray, w, h, angleDeg, fill);
+
+  const inkX: number[] = [];
+  const inkY: number[] = [];
+  const cy = (h - 1) * 0.5;
+
+  for (let y = 0; y < h; y++) {
+    const rowOff = y * w;
+    for (let x = 0; x < w; x++) {
+      if (gray[rowOff + x] < inkThreshold) {
+        inkX.push(x);
+        inkY.push(y - cy);
+      }
+    }
+  }
+
+  if (inkX.length < 20) {
+    return {
+      data: new Uint8ClampedArray(gray),
+      width: w,
+      height: h,
+      slantDeg: 0,
+      corrected: false,
+    };
+  }
+
+  const maxExtraW = Math.ceil(Math.tan((maxSlant * Math.PI) / 180) * h);
+  const binW = w + maxExtraW * 2 + 4;
+  const colCounts = new Int32Array(binW);
+
+  const scoreSlant = (deg: number): number => {
+    const k = Math.tan((deg * Math.PI) / 180);
+    colCounts.fill(0);
+    for (let i = 0; i < inkX.length; i++) {
+      const sx = Math.round(inkX[i] + k * inkY[i] + maxExtraW + 2);
+      if (sx >= 0 && sx < binW) {
+        colCounts[sx]++;
+      }
+    }
+    let energy = 0;
+    for (let x = 0; x < binW; x++) {
+      const c = colCounts[x];
+      if (c > 0) energy += c * c;
+    }
+    return energy;
+  };
+
+  const zeroEnergy = scoreSlant(0);
+  let bestDeg = 0;
+  let bestEnergy = zeroEnergy;
+
+  if (options.stepDeg !== undefined) {
+    for (let deg = -maxSlant; deg <= maxSlant + 1e-6; deg += stepDeg) {
+      const energy = scoreSlant(deg);
+      if (energy > bestEnergy) {
+        bestEnergy = energy;
+        bestDeg = deg;
+      }
+    }
+  } else {
+    // Coarse-to-fine sweep: step 8 deg coarse pass, then ±4 deg fine pass at 2 deg step
+    let coarseBestDeg = 0;
+    let coarseBestEnergy = zeroEnergy;
+    const coarseLimit = Math.floor(maxSlant / 8) * 8;
+    for (let deg = -coarseLimit; deg <= coarseLimit; deg += 8) {
+      if (deg === 0) continue;
+      const energy = scoreSlant(deg);
+      if (energy > coarseBestEnergy) {
+        coarseBestEnergy = energy;
+        coarseBestDeg = deg;
+      }
+    }
+
+    bestDeg = coarseBestDeg;
+    bestEnergy = coarseBestEnergy;
+    const fineStart = Math.max(-maxSlant, coarseBestDeg - 4);
+    const fineEnd = Math.min(maxSlant, coarseBestDeg + 4);
+    for (let deg = fineStart; deg <= fineEnd + 1e-6; deg += 2) {
+      if (deg === coarseBestDeg || deg === 0) continue;
+      const energy = scoreSlant(deg);
+      if (energy > bestEnergy) {
+        bestEnergy = energy;
+        bestDeg = deg;
+      }
+    }
+  }
+
+  if (Math.abs(bestDeg) < minCorrection || bestEnergy <= zeroEnergy * 1.05) {
+    return {
+      data: new Uint8ClampedArray(gray),
+      width: w,
+      height: h,
+      slantDeg: 0,
+      corrected: false,
+    };
+  }
+
+  const k = Math.tan((bestDeg * Math.PI) / 180);
+  const padX = Math.ceil(Math.abs(k) * (h * 0.5)) + 2;
+  const outW = w + padX * 2;
+  const out = new Uint8ClampedArray(outW * h).fill(fill);
+
+  for (let y = 0; y < h; y++) {
+    const dy = y - cy;
+    const dstOff = y * outW;
+    const row0 = y * w;
+    for (let dx = 0; dx < outW; dx++) {
+      // Inverse mapping: dstX = srcX + k * (y - cy) + padX  =>  srcX = dstX - padX - k * dy
+      const sx = dx - padX - k * dy;
+      const x0 = Math.floor(sx);
+      if (x0 < 0 || x0 >= w - 1) continue;
+      const fx = sx - x0;
+      const v0 = gray[row0 + x0];
+      const v1 = gray[row0 + x0 + 1];
+      out[dstOff + dx] = Math.round(v0 + (v1 - v0) * fx);
+    }
+  }
 
   return {
-    data: sheared.data,
-    width: sheared.width,
-    height: sheared.height,
-    angleDeg,
-    deslanted: true,
-    affineMatrix: sheared.affineMatrix,
+    data: out,
+    width: outW,
+    height: h,
+    slantDeg: Number(bestDeg.toFixed(1)),
+    corrected: true,
   };
 }
 

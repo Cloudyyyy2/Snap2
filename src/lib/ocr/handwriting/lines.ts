@@ -23,12 +23,13 @@ export interface CroppedLine {
 export function segmentLines(
   binary: Uint8ClampedArray,
   w: number,
-  h: number
+  h: number,
+  options?: { skipFilter?: boolean }
 ): LineBox[] {
   if (w === 0 || h === 0) return [];
 
   const activeBinary =
-    w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
+    !options?.skipFilter && w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
 
   const proj = new Float32Array(h);
   for (let y = 0; y < h; y++) {
@@ -106,44 +107,53 @@ export function segmentLines(
 
   if (peaks.length === 0) return [];
 
-  // Determine vertical boundaries between peaks by finding the lowest valley between adjacent peaks
+  // Determine vertical boundaries between peaks by finding the midpoint of the lowest valley
+  // between adjacent peaks so ascender/descender margins never bleed across neighboring lines.
   const lineRanges: Array<{ y0: number; y1: number }> = [];
   const activeThreshold = Math.max(1, maxProj * 0.04);
 
-  for (let i = 0; i < peaks.length; i++) {
-    let y0 = 0;
-    if (i === 0) {
-      y0 = peaks[0];
-      while (y0 > 0 && smooth[y0 - 1] >= activeThreshold) y0--;
-    } else {
-      const prevPeak = peaks[i - 1];
-      let minY = prevPeak;
-      let minVal = Infinity;
-      for (let y = prevPeak + 1; y < peaks[i]; y++) {
-        if (smooth[y] < minVal) {
-          minVal = smooth[y];
-          minY = y;
-        }
-      }
-      y0 = minY;
+  const valleys: number[] = [];
+  for (let i = 0; i < peaks.length - 1; i++) {
+    const pA = peaks[i];
+    const pB = peaks[i + 1];
+    let minVal = Infinity;
+    for (let y = pA + 1; y < pB; y++) {
+      if (smooth[y] < minVal) minVal = smooth[y];
     }
+    let firstMin = -1;
+    let lastMin = -1;
+    for (let y = pA + 1; y < pB; y++) {
+      if (smooth[y] <= minVal + 0.5) {
+        if (firstMin === -1) firstMin = y;
+        lastMin = y;
+      }
+    }
+    const valleyMid =
+      firstMin !== -1 ? Math.floor((firstMin + lastMin) / 2) : Math.floor((pA + pB) / 2);
+    valleys.push(Math.max(pA, Math.min(pB - 1, valleyMid)));
+  }
 
-    let y1 = h - 1;
-    if (i === peaks.length - 1) {
-      y1 = peaks[i];
-      while (y1 < h - 1 && smooth[y1 + 1] >= activeThreshold) y1++;
-    } else {
-      const nextPeak = peaks[i + 1];
-      let minY = peaks[i];
-      let minVal = Infinity;
-      for (let y = peaks[i] + 1; y < nextPeak; y++) {
-        if (smooth[y] < minVal) {
-          minVal = smooth[y];
-          minY = y;
-        }
-      }
-      y1 = minY;
-    }
+  for (let i = 0; i < peaks.length; i++) {
+    const upperLimit = i === 0 ? 0 : valleys[i - 1] + 1;
+    const lowerLimit = i === peaks.length - 1 ? h - 1 : valleys[i];
+
+    let y0 = peaks[i];
+    while (y0 > upperLimit && smooth[y0 - 1] >= activeThreshold) y0--;
+
+    let y1 = peaks[i];
+    while (y1 < lowerLimit && smooth[y1 + 1] >= activeThreshold) y1++;
+
+    // Expand gently by up to 0.32 * local line pitch for detached i-dots / accents,
+    // strictly capped at the midpoint valley so adjacent line bands never bleed in.
+    const prevDist = i > 0 ? peaks[i] - peaks[i - 1] : Infinity;
+    const nextDist = i < peaks.length - 1 ? peaks[i + 1] - peaks[i] : Infinity;
+    const localPitch = Number.isFinite(Math.min(prevDist, nextDist))
+      ? Math.min(prevDist, nextDist)
+      : Math.max(20, Math.round((y1 - y0 + 1) * 1.5));
+    const maxAscDescPad = Math.round(0.32 * localPitch);
+
+    y0 = Math.max(upperLimit, y0 - maxAscDescPad);
+    y1 = Math.min(lowerLimit, y1 + maxAscDescPad);
 
     lineRanges.push({ y0, y1 });
   }
@@ -657,3 +667,283 @@ export function cropToSquare(
   };
 }
 
+export interface HandwrittenWordCrop {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+  box: LineBox;
+}
+
+/**
+ * Removes disconnected ascender/descender bleeds from adjacent lines touching the
+ * top/bottom borders of a LineBox while keeping small dots and core line strokes intact.
+ */
+export function stripLineEdgeBleeds(
+  binary: Uint8ClampedArray,
+  w: number,
+  h: number,
+  box: LineBox
+): { mask: Uint8ClampedArray; width: number; height: number } {
+  const x0 = Math.max(0, box.x0);
+  const y0 = Math.max(0, box.y0);
+  const x1 = Math.min(w - 1, box.x1);
+  const y1 = Math.min(h - 1, box.y1);
+  const lw = Math.max(1, x1 - x0 + 1);
+  const lh = Math.max(1, y1 - y0 + 1);
+
+  const mask = new Uint8ClampedArray(lw * lh).fill(255);
+  const vis = new Uint8Array(lw * lh);
+  const q: number[] = [];
+  const midTop = Math.round(lh * 0.28);
+  const midBot = Math.round(lh * 0.78);
+
+  const ccs: Array<{
+    minLX: number;
+    maxLX: number;
+    minLY: number;
+    maxLY: number;
+    pts: number[];
+  }> = [];
+
+  for (let ly = 0; ly < lh; ly++) {
+    for (let lx = 0; lx < lw; lx++) {
+      const liIdx = ly * lw + lx;
+      if (vis[liIdx] || binary[(y0 + ly) * w + (x0 + lx)] !== 0) continue;
+
+      vis[liIdx] = 1;
+      q.length = 0;
+      q.push(liIdx);
+      let head = 0;
+      let minLY = lh;
+      let maxLY = -1;
+      let minLX = lw;
+      let maxLX = -1;
+
+      while (head < q.length) {
+        const idx = q[head++];
+        const cy = Math.floor(idx / lw);
+        const cx = idx - cy * lw;
+        if (cy < minLY) minLY = cy;
+        if (cy > maxLY) maxLY = cy;
+        if (cx < minLX) minLX = cx;
+        if (cx > maxLX) maxLX = cx;
+
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = cy + dy;
+          if (ny < 0 || ny >= lh) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = cx + dx;
+            if (nx < 0 || nx >= lw) continue;
+            const ni = ny * lw + nx;
+            if (!vis[ni] && binary[(y0 + ny) * w + (x0 + nx)] === 0) {
+              vis[ni] = 1;
+              q.push(ni);
+            }
+          }
+        }
+      }
+
+      ccs.push({ minLX, maxLX, minLY, maxLY, pts: q.slice() });
+    }
+  }
+
+  const isoGap = Math.max(10, Math.round(lh * 0.24));
+  for (let i = 0; i < ccs.length; i++) {
+    const cc = ccs[i];
+    const cw = cc.maxLX - cc.minLX + 1;
+    const ch = cc.maxLY - cc.minLY + 1;
+    const touchesMid = cc.maxLY >= midTop && cc.minLY <= midBot;
+    const isUpperBleedLoop = cc.minLY <= 2 && cc.maxLY < lh * 0.42 && cw > 10;
+    const isLowerBleedLoop = cc.maxLY >= lh - 3 && cc.minLY > lh * 0.62 && cw > 10;
+
+    // Only drop a thin vertical stem if it bleeds in from top/bottom line edge AND sits
+    // horizontally isolated from neighboring glyphs (never drop valid first/last letters).
+    let isIsolatedBorderStem = false;
+    if (
+      (cc.minLY <= 1 || cc.maxLY >= lh - 2) &&
+      cw <= 6 &&
+      ch >= lh * 0.45 &&
+      cw / Math.max(1, ch) < 0.28
+    ) {
+      const hasAdjacentInk = ccs.some(
+        (other, j) =>
+          j !== i && other.maxLX >= cc.minLX - isoGap && other.minLX <= cc.maxLX + isoGap
+      );
+      if (!hasAdjacentInk) {
+        isIsolatedBorderStem = true;
+      }
+    }
+
+    if (
+      !isIsolatedBorderStem &&
+      !isUpperBleedLoop &&
+      !isLowerBleedLoop &&
+      (touchesMid || cc.pts.length <= 28)
+    ) {
+      for (let k = 0; k < cc.pts.length; k++) {
+        mask[cc.pts[k]] = 0;
+      }
+    }
+  }
+
+  return { mask, width: lw, height: lh };
+}
+
+/**
+ * Segments a handwritten line into individual word crops with adjacent-line bleeds
+ * stripped and faint grayscale ink strokes bridged across binarization dropouts.
+ */
+export function segmentHandwrittenWordsInLine(
+  binary: Uint8ClampedArray,
+  gray: Uint8ClampedArray,
+  w: number,
+  h: number,
+  box: LineBox,
+  pad = 2
+): HandwrittenWordCrop[] {
+  const x0 = Math.max(0, box.x0);
+  const y0 = Math.max(0, box.y0);
+  const { mask, width: lw, height: lh } = stripLineEdgeBleeds(binary, w, h, box);
+
+  const colInk = new Int32Array(lw);
+  let totalLineInk = 0;
+  for (let ly = 0; ly < lh; ly++) {
+    const mOff = ly * lw;
+    for (let lx = 0; lx < lw; lx++) {
+      if (mask[mOff + lx] === 0) {
+        colInk[lx]++;
+        totalLineInk++;
+      }
+    }
+  }
+
+  if (totalLineInk < 14) return [];
+
+  // Check if a horizontal column range actually contains faint gray pen ink (< 226)
+  // in the core band so faint pen strokes don't fracture single words into fragments.
+  const hasFaintGrayInGap = (gxStart: number, gxEnd: number): boolean => {
+    const gapW = gxEnd - gxStart + 1;
+    if (gapW <= 0 || gapW > Math.max(18, Math.round(lh * 0.45))) return false;
+    let faintCols = 0;
+    const bandTop = Math.round(lh * 0.18);
+    const bandBot = Math.round(lh * 0.84);
+    for (let lx = gxStart; lx <= gxEnd; lx++) {
+      const gx = x0 + lx;
+      let darkPx = 0;
+      for (let ly = bandTop; ly <= bandBot; ly++) {
+        if (gray[(y0 + ly) * w + gx] < 226) darkPx++;
+      }
+      if (darkPx >= 1) faintCols++;
+    }
+    return faintCols / gapW >= 0.28;
+  };
+
+  // Collect gap widths to adaptively distinguish inter-letter kerning from word spacing
+  const gaps: number[] = [];
+  let inGapInk = false;
+  let gapStartX = -1;
+  for (let i = 0; i < lw; i++) {
+    if (colInk[i] > 0) {
+      if (!inGapInk) {
+        inGapInk = true;
+        if (gapStartX !== -1) {
+          const gl = i - gapStartX;
+          if (gl > 0) gaps.push(gl);
+        }
+      }
+    } else if (inGapInk) {
+      inGapInk = false;
+      gapStartX = i;
+    }
+  }
+
+  let wordGap = Math.max(9, Math.round(lh * 0.27));
+  if (gaps.length >= 4) {
+    const sortedGaps = [...gaps].sort((a, b) => a - b);
+    const medianGap = sortedGaps[Math.floor(sortedGaps.length * 0.5)];
+    const p80Gap = sortedGaps[Math.floor(sortedGaps.length * 0.8)];
+    if (p80Gap >= medianGap * 2.2 && p80Gap >= 6) {
+      wordGap = Math.max(
+        7,
+        Math.min(Math.round(lh * 0.34), Math.max(Math.round(medianGap * 2.2), Math.round(lh * 0.21)))
+      );
+    }
+  }
+  const rawSpans: Array<{ sx: number; ex: number; ink: number }> = [];
+  let s = -1;
+  let e = -1;
+  let z = 0;
+  let spanInk = 0;
+
+  for (let i = 0; i < lw; i++) {
+    if (colInk[i] > 0) {
+      if (s === -1) {
+        s = i;
+        spanInk = colInk[i];
+      } else if (z >= wordGap && !hasFaintGrayInGap(e + 1, i - 1)) {
+        rawSpans.push({ sx: s, ex: e, ink: spanInk });
+        s = i;
+        spanInk = colInk[i];
+      } else {
+        spanInk += colInk[i];
+      }
+      e = i;
+      z = 0;
+    } else if (s !== -1) {
+      z++;
+    }
+  }
+  if (s !== -1) {
+    rawSpans.push({ sx: s, ex: e, ink: spanInk });
+  }
+
+  const keptSpans = rawSpans.filter(
+    (sp) => sp.ink >= Math.max(14, Math.round(totalLineInk * 0.04))
+  );
+
+  const crops: HandwrittenWordCrop[] = [];
+  for (const sp of keptSpans) {
+    let minX = x0 + sp.ex;
+    let maxX = x0 + sp.sx;
+    let minY = y0 + lh - 1;
+    let maxY = y0;
+
+    for (let ly = 0; ly < lh; ly++) {
+      const mOff = ly * lw;
+      for (let lx = sp.sx; lx <= sp.ex; lx++) {
+        if (mask[mOff + lx] === 0) {
+          const gx = x0 + lx;
+          const gy = y0 + ly;
+          if (gx < minX) minX = gx;
+          if (gx > maxX) maxX = gx;
+          if (gy < minY) minY = gy;
+          if (gy > maxY) maxY = gy;
+        }
+      }
+    }
+
+    if (maxX < minX || maxY < minY) continue;
+    const cw = maxX - minX + 1;
+    const ch = maxY - minY + 1;
+    const outW = cw + pad * 2;
+    const outH = ch + pad * 2;
+    const wordGray = new Uint8ClampedArray(outW * outH).fill(255);
+
+    for (let gy = minY; gy <= maxY; gy++) {
+      const srcRow = gy * w;
+      const dstRow = (gy - minY + pad) * outW;
+      for (let gx = minX; gx <= maxX; gx++) {
+        wordGray[dstRow + (gx - minX + pad)] = gray[srcRow + gx];
+      }
+    }
+
+    crops.push({
+      data: wordGray,
+      width: outW,
+      height: outH,
+      box: { x0: minX, y0: minY, x1: maxX, y1: maxY },
+    });
+  }
+
+  return crops;
+}

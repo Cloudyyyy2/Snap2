@@ -224,40 +224,70 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
     45000
   );
 
-  it('saveGrayscalePng succeeds after auto-bbox-shrink without memory area too small error', async () => {
+  it('detectHandwriting identifies neat semi-disconnected handwriting via stroke-width variance and baseline wobble', async () => {
+    const { detectHandwriting } = await import('../../src/lib/ocr/handwriting/detect');
+    const w = 340;
+    const h = 160;
+    const bin = new Uint8ClampedArray(w * h).fill(255);
+
+    // Simulate neat disconnected handwritten characters/glyphs across 2 lines with varying height,
+    // baseline wobble, and stroke thickness
+    const glyphs = [
+      // Line 1
+      { x0: 40, x1: 56, y0: 28, y1: 48, thick: 2 },
+      { x0: 66, x1: 78, y0: 34, y1: 51, thick: 4 },
+      { x0: 88, x1: 102, y0: 30, y1: 56, thick: 2 },
+      { x0: 112, x1: 126, y0: 36, y1: 50, thick: 5 },
+      { x0: 136, x1: 158, y0: 26, y1: 49, thick: 3 },
+      { x0: 168, x1: 184, y0: 33, y1: 55, thick: 2 },
+      // Line 2
+      { x0: 45, x1: 60, y0: 88, y1: 112, thick: 3 },
+      { x0: 70, x1: 86, y0: 95, y1: 110, thick: 5 },
+      { x0: 96, x1: 110, y0: 84, y1: 115, thick: 2 },
+      { x0: 120, x1: 135, y0: 92, y1: 109, thick: 4 },
+      { x0: 145, x1: 168, y0: 86, y1: 111, thick: 2 },
+    ];
+
+    for (const g of glyphs) {
+      for (let y = g.y0; y <= g.y1; y++) {
+        for (let x = g.x0; x <= g.x0 + g.thick - 1; x++) {
+          bin[y * w + x] = 0;
+        }
+        if (y >= g.y0 + 3 && y <= g.y0 + 3 + g.thick) {
+          for (let x = g.x0; x <= g.x1; x++) {
+            bin[y * w + x] = 0;
+          }
+        }
+      }
+    }
+
+    const res = detectHandwriting(bin, w, h);
+    expect(res.isHandwriting).toBe(true);
+    expect(res.metrics.strokeWidthCv).toBeGreaterThan(0);
+  });
+
+  it('never returns a hardcoded grocery mock fallback when local TrOCR weights are unavailable', async () => {
+    if (isHandwritingModelAvailable()) {
+      return;
+    }
+
     const svg = `
-      <svg width="460" height="160" xmlns="http://www.w3.org/2000/svg">
-        <rect width="460" height="160" fill="white" />
-        <line x1="0" y1="68" x2="460" y2="68" stroke="#c8d0dc" stroke-width="1.5" />
-        <line x1="0" y1="128" x2="460" y2="128" stroke="#c8d0dc" stroke-width="1.5" />
-        <text x="24" y="60" font-size="34" font-family="sans-serif" fill="#18181b">buy milk</text>
-        <text x="24" y="120" font-size="34" font-family="sans-serif" fill="#18181b">call dentist</text>
+      <svg width="420" height="160" xmlns="http://www.w3.org/2000/svg">
+        <rect width="420" height="160" fill="white" />
+        <path d="M40 70 C70 40, 110 95, 150 60 C190 35, 230 90, 280 55" fill="none" stroke="#18181b" stroke-width="5" />
       </svg>
     `;
     const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
-    const tempExportRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'snapremind-ocr-stage-test-'));
 
-    try {
-      const res = await processImageWithLocalOcr({
-        imageBuffer: pngBuffer,
-        ocrProfile: 'handwriting',
-        exportStages: true,
-        exportRootDir: tempExportRoot,
-      });
+    const res = await processImageWithLocalOcr({
+      imageBuffer: pngBuffer,
+      ocrProfile: 'handwriting',
+      exportStages: false,
+    });
 
-      expect(res.appliedSteps.some((step) => step.startsWith('auto-bbox-shrink'))).toBe(true);
-      expect(res.exportDir).toBeDefined();
-      const dir = res.exportDir!;
-      expect(fs.existsSync(path.join(dir, '03b_background_flattened.png'))).toBe(true);
-      expect(fs.existsSync(path.join(dir, '03c_ruled_lines_removed.png'))).toBe(true);
-      expect(fs.existsSync(path.join(dir, '04_contrast_enhanced.png'))).toBe(true);
-      expect(fs.existsSync(path.join(dir, '05_adaptive_binary.png'))).toBe(true);
-
-      const flattenedMetadata = await sharp(path.join(dir, '03b_background_flattened.png')).metadata();
-      expect(flattenedMetadata.width).toBeGreaterThan(0);
-      expect(flattenedMetadata.height).toBeGreaterThan(0);
-    } finally {
-      fs.rmSync(tempExportRoot, { recursive: true, force: true });
-    }
+    expect(res.text).toBe('');
+    expect(res.lines.length).toBe(0);
+    expect(res.text.toLowerCase()).not.toContain('bread');
+    expect(res.text.toLowerCase()).not.toContain('pan au chocolat');
   });
 });

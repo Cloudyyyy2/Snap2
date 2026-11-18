@@ -13,25 +13,12 @@ import {
   Clock,
   Crop,
   CheckCircle2,
-  Copy,
-  Check,
-  PenTool,
-  HardDrive,
 } from 'lucide-react';
 import { CameraCapture } from './CameraCapture';
 import { InteractiveQuadCropper } from './InteractiveQuadCropper';
-import { Reminder, Category, Priority, ChecklistItem, DetectedStyle } from '../types';
+import { Reminder, Category, Priority, ChecklistItem, DetectedStyle, OcrProfile } from '../types';
 import { detectWordsOnImage, DetectedWordSquare } from '../lib/ocr/onDeviceWordDetector';
-import { decodeWordContextually } from '../lib/ocr/handwriting/dictionaryDecoder';
-import { correctTextWithLexicon } from '../lib/ocr/wordDataset';
 import { preprocessForOCR } from '../services/imageProcessor';
-
-export type OcrStudioMode = 'auto' | 'handwriting' | 'printed' | 'offline';
-
-export interface LineConfidenceItem {
-  text: string;
-  confidence: number;
-}
 
 export interface RecentScanItem {
   id: string;
@@ -104,8 +91,23 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
 }) => {
   const [localModelReady, setLocalModelReady] = useState<boolean | null>(null);
   const [printedModelReady, setPrintedModelReady] = useState<boolean | null>(null);
+  const [handwritingModelState, setHandwritingModelState] = useState<
+    'checking' | 'ready' | 'downloading' | 'missing'
+  >('checking');
+  const [printedModelState, setPrintedModelState] = useState<
+    'checking' | 'ready' | 'downloading' | 'missing'
+  >('checking');
+  const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [handwritingModelTier, setHandwritingModelTier] = useState<string | null>(null);
   const [printedModelTier, setPrintedModelTier] = useState<string | null>(null);
+  const [visionConfigured, setVisionConfigured] = useState<boolean>(true);
+
+  const [ocrMode, setOcrMode] = useState<'offline' | 'vision'>('offline');
+  const [offlineProfile, setOfflineProfile] = useState<OcrProfile>('auto');
+  const [aiEnhancementEnabled, setAiEnhancementEnabled] = useState<boolean>(false);
+  const [isEnhancingAi, setIsEnhancingAi] = useState<boolean>(false);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
 
   const [sourceImage, setSourceImage] = useState<string | null>(null);
   const [processedImage, setProcessedImage] = useState<string | null>(null);
@@ -128,60 +130,65 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
   const [showWordSquares, setShowWordSquares] = useState(false);
 
   const [recentScans, setRecentScans] = useState<RecentScanItem[]>(() => getStoredRecentScans());
-  const [ocrMode, setOcrMode] = useState<OcrStudioMode>('auto');
-  const [copied, setCopied] = useState(false);
-  const [lineConfidences, setLineConfidences] = useState<LineConfidenceItem[]>([]);
-
-  const handleCopyText = useCallback(async () => {
-    if (!editableText.trim()) return;
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(editableText);
-      } else if (typeof document !== 'undefined') {
-        const el = document.createElement('textarea');
-        el.value = editableText;
-        document.body.appendChild(el);
-        el.select();
-        document.execCommand('copy');
-        document.body.removeChild(el);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.warn('Copy failed:', err);
-    }
-  }, [editableText]);
 
   useEffect(() => {
     onSheetOpenChange?.(reviewSheetOpen);
   }, [reviewSheetOpen, onSheetOpenChange]);
 
-  useEffect(() => {
-    let active = true;
-    fetch('/api/local-ocr/status')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (active && data) {
-          setLocalModelReady(data.handwritingModel === 'ready');
-          setPrintedModelReady(data.printedModel === 'ready');
-          setHandwritingModelTier(
-            data.handwritingModelId === 'trocr-base-handwritten' ? 'TrOCR Base' : 'TrOCR'
-          );
-          setPrintedModelTier(
-            data.printedModelId === 'tessdata_full' ? 'Tesseract Full' : 'Tesseract'
-          );
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setLocalModelReady(false);
-          setPrintedModelReady(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
+  const fetchLocalOcrStatus = useCallback(async () => {
+    try {
+      const r = await fetch('/api/local-ocr/status');
+      if (!r.ok) return;
+      const data = await r.json();
+      if (!data) return;
+      setLocalModelReady(data.handwritingModel === 'ready');
+      setPrintedModelReady(data.printedModel === 'ready');
+      setHandwritingModelState(
+        data.handwritingModel === 'ready'
+          ? 'ready'
+          : data.handwritingModel === 'downloading'
+            ? 'downloading'
+            : 'missing'
+      );
+      setPrintedModelState(
+        data.printedModel === 'ready'
+          ? 'ready'
+          : data.printedModel === 'downloading'
+            ? 'downloading'
+            : 'missing'
+      );
+      setDownloadProgress(typeof data.downloadProgress === 'number' ? data.downloadProgress : 0);
+      setDownloadError(typeof data.downloadError === 'string' ? data.downloadError : null);
+      setHandwritingModelTier(
+        data.handwritingModelId === 'trocr-base-handwritten' ? 'TrOCR Base' : 'TrOCR'
+      );
+      setPrintedModelTier(
+        data.printedModelId === 'tessdata_full' ? 'Tesseract Full' : 'Tesseract'
+      );
+      if (typeof data.visionConfigured === 'boolean') {
+        setVisionConfigured(data.visionConfigured);
+      }
+    } catch {
+      setLocalModelReady(false);
+      setPrintedModelReady(false);
+      setHandwritingModelState('missing');
+      setPrintedModelState('missing');
+    }
   }, []);
+
+  useEffect(() => {
+    fetchLocalOcrStatus();
+  }, [fetchLocalOcrStatus]);
+
+  useEffect(() => {
+    if (handwritingModelState !== 'downloading' && printedModelState !== 'downloading') {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      fetchLocalOcrStatus();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [handwritingModelState, printedModelState, fetchLocalOcrStatus]);
 
   const recordRecentScan = useCallback(
     (img: string, previewText: string, engineLabel: string) => {
@@ -255,7 +262,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
     []
   );
 
-  const processImageWithGrayscaleNormalization = useCallback(async (dataUrl: string): Promise<string> => {
+  const processImageWithAdaptiveThresholding = useCallback(async (dataUrl: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -292,17 +299,134 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
     });
   }, []);
 
-  // Backwards-compatible alias for existing callers
-  const processImageWithAdaptiveThresholding = processImageWithGrayscaleNormalization;
+  const parseLocalTextToDraft = useCallback(
+    (rawText: string, extraPrompt?: string, engineLabel = 'Offline · Local Parser'): DraftReminderState => {
+      const lines = rawText
+        .split(/\r?\n/)
+        .map((l) => l.replace(/^[-*•\u2022]\s*/, '').replace(/^\[[ xX]?\]\s*/, '').trim())
+        .filter(Boolean);
+
+      const combined = [rawText, extraPrompt || ''].filter(Boolean).join('\n').toLowerCase();
+      const firstLine = lines[0] || extraPrompt?.trim() || 'Scanned Note';
+      const title = firstLine.length > 72 ? `${firstLine.slice(0, 69).trim()}...` : firstLine;
+      const description =
+        lines.length > 1 ? lines.slice(1).join('\n') : rawText.trim() || extraPrompt?.trim() || '';
+
+      let category: Category = 'Tasks';
+      if (/\b(bill|invoice|rent|electric|water|utility|payment|pay|tax|due)\b/.test(combined)) {
+        category = 'Bills';
+      } else if (/\b(doctor|dentist|clinic|med|rx|appointment|checkup|health|gym)\b/.test(combined)) {
+        category = 'Health';
+      } else if (/\b(flight|hotel|train|airport|ticket|trip|travel)\b/.test(combined)) {
+        category = 'Travel';
+      } else if (/\b(meeting|standup|deadline|report|client|office|project|review)\b/.test(combined)) {
+        category = 'Work';
+      } else if (/\b(party|dinner|birthday|concert|wedding|event|meetup)\b/.test(combined)) {
+        category = 'Events';
+      }
+
+      const priority: Priority = /\b(urgent|asap|immediately|important|critical|must|today)\b/.test(combined)
+        ? 'high'
+        : /\b(someday|whenever|low priority|optional|later)\b/.test(combined)
+          ? 'low'
+          : 'medium';
+
+      const checklist: ChecklistItem[] =
+        lines.length > 1
+          ? lines.slice(0, 50).map((line, idx) => ({
+              id: `chk-${Date.now()}-${idx}`,
+              text: line,
+              completed: false,
+            }))
+          : [];
+
+      const due = new Date(Date.now() + 86400000);
+      due.setHours(9, 0, 0, 0);
+
+      return {
+        title,
+        description,
+        dueDate: due.toISOString().slice(0, 16),
+        category,
+        priority,
+        checklist,
+        tags: ['ocr', category.toLowerCase()],
+        providerLabel: engineLabel,
+      };
+    },
+    []
+  );
+
+  // Stage 2 (Optional): Enhance OCR text into a structured checklist/reminder using text-only AI (never sending image)
+  const enhanceDraftWithAiFromText = useCallback(
+    async (
+      textToStructure: string,
+      fallbackDraft: DraftReminderState
+    ): Promise<{ draft: DraftReminderState; notice: string | null }> => {
+      if (!textToStructure.trim() && !promptText.trim()) {
+        return { draft: fallbackDraft, notice: null };
+      }
+
+      setIsEnhancingAi(true);
+      setAiNotice(null);
+      try {
+        const res = await fetch('/api/extract-reminder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ocrText: textToStructure.trim(),
+            prompt: promptText.trim() || undefined,
+            ocrProfile: offlineProfile,
+          }),
+        });
+
+        const contentType = res.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+          ? await res.json()
+          : { success: false, error: await res.text() };
+
+        if (!res.ok || !data.success) {
+          return {
+            draft: fallbackDraft,
+            notice: 'AI enhancement unavailable right now — kept your deterministic OCR checklist.',
+          };
+        }
+
+        const aiProvider =
+          data.provider === 'groq'
+            ? 'AI Enhanced · Groq'
+            : data.provider === 'gemini'
+              ? 'AI Enhanced · Gemini'
+              : fallbackDraft.providerLabel;
+
+        return {
+          draft: buildDraftFromApi(data, textToStructure.trim(), aiProvider),
+          notice:
+            data.provider === 'local-parser'
+              ? 'AI API key not configured — kept your deterministic offline OCR checklist.'
+              : null,
+        };
+      } catch {
+        return {
+          draft: fallbackDraft,
+          notice: 'AI enhancement unavailable right now — kept your deterministic OCR checklist.',
+        };
+      } finally {
+        setIsEnhancingAi(false);
+      }
+    },
+    [buildDraftFromApi, offlineProfile, promptText]
+  );
 
   const runExtractionPipeline = useCallback(
-    async (image: string, options?: { forceVision?: boolean }) => {
+    async (image: string, options?: { forceVision?: boolean; profileOverride?: OcrProfile }) => {
       setSourceImage(image);
       setProcessedImage(null);
       setPreviewMode('processed');
       setReviewSheetOpen(true);
       setIsScanning(true);
       setErrorMsg(null);
+      setAiNotice(null);
       setDraft(null);
       setScanMeta(null);
       setDetectedWords([]);
@@ -312,163 +436,169 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
         .then((res) => setDetectedWords(res.words))
         .catch(() => setDetectedWords([]));
 
+      const useVision = Boolean(options?.forceVision || ocrMode === 'vision');
+      const activeProfile = options?.profileOverride || offlineProfile;
+
       try {
-        setStatusStep('Normalizing handwriting contrast with grayscale-preserving illumination flattening...');
-        const enhancedImage = await processImageWithGrayscaleNormalization(image);
-        setProcessedImage(enhancedImage);
+        if (!useVision) {
+          // Stage 1 (Offline-first): Submit raw original image directly to /api/local-ocr without client adaptive preprocessing
+          setStatusStep(
+            handwritingModelState === 'downloading'
+              ? `Downloading offline TrOCR model (${downloadProgress}%)...`
+              : activeProfile === 'handwriting'
+                ? 'Reading handwriting offline with TrOCR...'
+                : activeProfile === 'printed'
+                  ? 'Reading printed text offline with Tesseract...'
+                  : 'Running offline OCR & layout cleanup...'
+          );
 
-        let extractedTextPreview = '';
-        let engineLabel = '';
-        let detectedStyle: DetectedStyle = 'handwriting';
-        let appliedSteps: string[] = ['grayscale-luminance', 'contrast-normalized'];
-        let accuracyScore = 95;
-        let verifiedWords = 0;
-        let totalWords = 0;
-        let linesCount = 1;
-        let rawData: any = null;
-
-        if (ocrMode === 'offline') {
-          setStatusStep('Reading document locally with on-device offline OCR...');
           const res = await fetch('/api/local-ocr', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              image: enhancedImage,
-              ocrProfile: 'auto',
+              image,
+              ocrProfile: activeProfile,
               exportStages: true,
-            }),
-          });
-          const contentType = res.headers.get('content-type') || '';
-          rawData = contentType.includes('application/json')
-            ? await res.json()
-            : { success: false, error: await res.text() };
-
-          if (!res.ok || !rawData.success) {
-            throw new Error(rawData.error || `Offline OCR failed (HTTP ${res.status})`);
-          }
-
-          extractedTextPreview = rawData.text || '';
-          detectedStyle = rawData.detectedStyle || 'handwriting';
-          engineLabel = `Offline · Local ${rawData.recognizer === 'trocr-host' ? 'TrOCR' : rawData.recognizer === 'tesseract-host' ? 'Tesseract' : 'OCR'}`;
-          appliedSteps = rawData.appliedSteps || appliedSteps;
-
-          const linesList = rawData.lines || [];
-          linesCount = linesList.length || 1;
-          const confs: LineConfidenceItem[] = linesList.map((l: any) => ({
-            text: l.text,
-            confidence: Math.round(l.confidence <= 1 ? l.confidence * 100 : l.confidence),
-          }));
-          setLineConfidences(confs);
-
-          const summary = correctTextWithLexicon(extractedTextPreview);
-          accuracyScore = rawData.accuracyScore || summary.accuracyScore;
-          verifiedWords = rawData.verifiedWords || summary.wordsVerified;
-          totalWords = rawData.totalWords || summary.totalWords;
-
-          setEditableText(extractedTextPreview);
-          setScanMeta({
-            linesCount,
-            detectedStyle,
-            engineLabel,
-            appliedSteps,
-            accuracyScore,
-            verifiedWords,
-            totalWords,
-          });
-          setDraft(buildDraftFromApi(rawData, extractedTextPreview, engineLabel));
-          recordRecentScan(image, rawData.data?.title || extractedTextPreview, engineLabel);
-        } else {
-          setStatusStep(
-            ocrMode === 'handwriting'
-              ? 'Reading cursive handwriting with Vision AI...'
-              : ocrMode === 'printed'
-              ? 'Reading printed text with Vision AI...'
-              : 'Reading text with Vision AI...'
-          );
-          const res = await fetch('/api/extract-reminder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              image: enhancedImage,
               prompt: promptText.trim() || undefined,
-              ocrProfile: ocrMode,
             }),
           });
 
           const contentType = res.headers.get('content-type') || '';
-          rawData = contentType.includes('application/json')
+          const data = contentType.includes('application/json')
             ? await res.json()
             : { success: false, error: await res.text() };
 
-          if (!res.ok || !rawData.success) {
-            throw new Error(rawData.error || `Extraction failed (HTTP ${res.status})`);
+          if (!res.ok || !data.success) {
+            throw new Error(data.error || `Offline OCR failed (HTTP ${res.status})`);
           }
 
-          engineLabel =
-            rawData.provider === 'local-parser'
-              ? 'Offline · Local Parser'
-              : `${ocrMode === 'handwriting' ? 'Cursive' : ocrMode === 'printed' ? 'Printed' : 'Auto'} · Vision AI (Grayscale Normalized)`;
+          fetchLocalOcrStatus();
 
-          extractedTextPreview =
-            rawData.rawText ||
-            rawData.ocrText ||
-            [rawData.data?.title, rawData.data?.description].filter(Boolean).join('\n');
+          const extractedText: string = typeof data.text === 'string' ? data.text.trim() : '';
+          if (data.processedPreview) {
+            setProcessedImage(data.processedPreview);
+          }
 
-          const correctedText = extractedTextPreview
-            ? extractedTextPreview
-                .split('\n')
-                .map((line: string) =>
-                  line
-                    .split(/\s+/)
-                    .map((word: string) => {
-                      if (word.length >= 3) {
-                        const corrected = decodeWordContextually(word);
-                        return corrected.isDictionaryMatch ? corrected.correctedWord : word;
-                      }
-                      return word;
-                    })
-                    .join(' ')
+          const recognizerEngineLabel =
+            data.recognizer === 'trocr-host'
+              ? `Offline · ${handwritingModelTier || 'TrOCR'} Handwriting`
+              : data.recognizer === 'tesseract-host'
+                ? `Offline · ${printedModelTier || 'Tesseract'} Printed`
+                : data.recognizer === 'hybrid-host'
+                  ? 'Offline · Hybrid (TrOCR + Tesseract)'
+                  : 'Offline · Model Pending';
+
+          const style: DetectedStyle =
+            data.detectedStyle === 'handwriting' ||
+            data.detectedStyle === 'mixed' ||
+            data.detectedStyle === 'printed'
+              ? data.detectedStyle
+              : activeProfile === 'printed'
+                ? 'printed'
+                : 'handwriting';
+
+          const linesArr = Array.isArray(data.lines) ? data.lines : [];
+          const avgConf =
+            linesArr.length > 0
+              ? Math.round(
+                  (linesArr.reduce(
+                    (sum: number, l: any) => sum + (typeof l?.confidence === 'number' ? l.confidence : 0.8),
+                    0
+                  ) /
+                    linesArr.length) *
+                    100
                 )
-                .join('\n')
-            : '';
+              : undefined;
 
-          const textForReview = correctedText || extractedTextPreview;
-          const textLines = textForReview.split('\n').filter(Boolean);
-          linesCount = textLines.length || 1;
-
-          const confs: LineConfidenceItem[] = textLines.map((line) => {
-            const lineSummary = correctTextWithLexicon(line);
-            return {
-              text: line,
-              confidence: Math.max(88, lineSummary.accuracyScore),
-            };
-          });
-          setLineConfidences(confs);
-
-          const summary = correctTextWithLexicon(textForReview);
-          accuracyScore = Math.max(92, summary.accuracyScore);
-          verifiedWords = summary.wordsVerified;
-          totalWords = summary.totalWords;
-          detectedStyle =
-            ocrMode === 'handwriting'
-              ? 'handwriting'
-              : ocrMode === 'printed'
-              ? 'printed'
-              : rawData.detectedStyle || 'handwriting';
-
-          setEditableText(textForReview);
+          setEditableText(extractedText);
           setScanMeta({
-            linesCount,
-            detectedStyle,
-            engineLabel,
-            appliedSteps,
-            accuracyScore,
-            verifiedWords,
-            totalWords,
+            linesCount: linesArr.length || (extractedText ? extractedText.split('\n').length : 0),
+            detectedStyle: style,
+            engineLabel: recognizerEngineLabel,
+            appliedSteps: Array.isArray(data.appliedSteps) ? data.appliedSteps : undefined,
+            skewAngle: typeof data.skewAngle === 'number' ? data.skewAngle : undefined,
+            regionsCount: typeof data.regionsCount === 'number' ? data.regionsCount : undefined,
+            accuracyScore: avgConf,
+            verifiedWords: extractedText ? extractedText.split(/\s+/).filter(Boolean).length : 0,
+            totalWords: extractedText ? extractedText.split(/\s+/).filter(Boolean).length : 0,
           });
-          setDraft(buildDraftFromApi(rawData, extractedTextPreview, engineLabel));
-          recordRecentScan(image, rawData.data?.title || extractedTextPreview, engineLabel);
+
+          if (!extractedText) {
+            if (data.recognizer === 'vision-fallback') {
+              setErrorMsg(
+                'Offline TrOCR handwriting weights could not be loaded yet. Check your connection for first-time download or switch to Vision AI.'
+              );
+            } else {
+              setErrorMsg(
+                'No readable text detected in this crop. Try Adjust Frame or switch Engine Profile.'
+              );
+            }
+            return;
+          }
+
+          const deterministicDraft = data.data
+            ? buildDraftFromApi({ data: data.data }, extractedText, recognizerEngineLabel)
+            : parseLocalTextToDraft(extractedText, promptText.trim() || undefined, recognizerEngineLabel);
+
+          if (aiEnhancementEnabled) {
+            setStatusStep('Enhancing checklist with AI (text-only)...');
+            const enhanced = await enhanceDraftWithAiFromText(extractedText, deterministicDraft);
+            setDraft(enhanced.draft);
+            setAiNotice(enhanced.notice);
+            recordRecentScan(image, enhanced.draft.title || extractedText, enhanced.draft.providerLabel);
+          } else {
+            setDraft(deterministicDraft);
+            recordRecentScan(image, deterministicDraft.title || extractedText, recognizerEngineLabel);
+          }
+          return;
         }
+
+        // Vision AI path (explicitly requested via mode toggle or "Try Vision AI")
+        setStatusStep('Normalizing handwriting contrast with Gaussian adaptive thresholding...');
+        const enhancedImage = await processImageWithAdaptiveThresholding(image);
+        setProcessedImage(enhancedImage);
+
+        setStatusStep('Reading handwritten text with Vision AI...');
+        const res = await fetch('/api/extract-reminder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: enhancedImage,
+            prompt: promptText.trim() || undefined,
+            ocrProfile: activeProfile,
+          }),
+        });
+
+        const contentType = res.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+          ? await res.json()
+          : { success: false, error: await res.text() };
+
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `Extraction failed (HTTP ${res.status})`);
+        }
+
+        const engineLabel =
+          data.provider === 'local-parser'
+            ? 'Offline · Local Parser'
+            : data.provider === 'groq'
+              ? 'Vision AI · Groq'
+              : 'Vision AI · Gemini';
+
+        const extractedTextPreview =
+          data.rawText ||
+          data.ocrText ||
+          [data.data?.title, data.data?.description].filter(Boolean).join('\n');
+
+        setEditableText(extractedTextPreview || '');
+        setScanMeta({
+          linesCount: extractedTextPreview ? extractedTextPreview.split('\n').length : 1,
+          detectedStyle: 'handwriting',
+          engineLabel,
+        });
+        const built = buildDraftFromApi(data, extractedTextPreview, engineLabel);
+        setDraft(built);
+        recordRecentScan(image, built.title || extractedTextPreview, engineLabel);
       } catch (err: any) {
         console.error('OCR scan error:', err);
         setErrorMsg(err?.message || 'Could not scan image. You can type or retry below.');
@@ -483,15 +613,20 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
       }
     },
     [
+      aiEnhancementEnabled,
       buildDraftFromApi,
+      downloadProgress,
+      enhanceDraftWithAiFromText,
+      fetchLocalOcrStatus,
+      handwritingModelState,
       handwritingModelTier,
-      localModelReady,
       ocrMode,
-      printedModelReady,
+      offlineProfile,
+      parseLocalTextToDraft,
       printedModelTier,
+      processImageWithAdaptiveThresholding,
       promptText,
       recordRecentScan,
-      processImageWithGrayscaleNormalization,
     ]
   );
 
@@ -542,41 +677,51 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
     [runExtractionPipeline]
   );
 
+  const handleCreateListWithAi = async () => {
+    const sourceText = editableText.trim() || draft?.description || '';
+    if (!sourceText && !promptText.trim()) {
+      setErrorMsg('Enter or scan some text before creating a list with AI.');
+      return;
+    }
+
+    const baseDraft =
+      draft ||
+      parseLocalTextToDraft(
+        sourceText,
+        promptText.trim() || undefined,
+        scanMeta?.engineLabel || 'Offline · Local Parser'
+      );
+
+    setErrorMsg(null);
+    const enhanced = await enhanceDraftWithAiFromText(sourceText, baseDraft);
+    setDraft(enhanced.draft);
+    setAiNotice(enhanced.notice);
+  };
+
   const handleConvertTextToReminder = async () => {
     if (!editableText.trim() && !promptText.trim()) {
       setErrorMsg('Enter or scan some text before converting to a reminder.');
       return;
     }
 
-    setIsScanning(true);
-    setStatusStep('Structuring reminder...');
     setErrorMsg(null);
+    const baseDraft = parseLocalTextToDraft(
+      editableText.trim(),
+      promptText.trim() || undefined,
+      scanMeta?.engineLabel || 'Offline · Local Parser'
+    );
 
+    if (!aiEnhancementEnabled) {
+      setDraft(baseDraft);
+      return;
+    }
+
+    setIsScanning(true);
+    setStatusStep('Creating structured list with AI (text-only)...');
     try {
-      // Final step only: pass verified extracted OCR text (never re-uploading image) to AI/local reminder structurer
-      const res = await fetch('/api/extract-reminder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ocrText: editableText.trim(),
-          prompt: promptText.trim() || undefined,
-          ocrProfile: 'auto',
-        }),
-      });
-
-      const contentType = res.headers.get('content-type') || '';
-      const data = contentType.includes('application/json')
-        ? await res.json()
-        : { success: false, error: await res.text() };
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `Conversion failed (HTTP ${res.status})`);
-      }
-
-      const engineLabel = scanMeta?.engineLabel || 'OCR Studio';
-      setDraft(buildDraftFromApi(data, editableText.trim(), engineLabel));
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'Could not convert text to reminder.');
+      const enhanced = await enhanceDraftWithAiFromText(editableText.trim(), baseDraft);
+      setDraft(enhanced.draft);
+      setAiNotice(enhanced.notice);
     } finally {
       setIsScanning(false);
       setStatusStep('');
@@ -638,87 +783,140 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
   };
 
   const offlineStatusText =
-    localModelReady === true || printedModelReady === true
-      ? `Offline ${handwritingModelTier || 'TrOCR'} + ${printedModelTier || 'Tesseract'} · Auto-detect`
-      : localModelReady === false
-        ? 'Offline parser active'
-        : 'Checking offline OCR...';
+    ocrMode === 'vision'
+      ? visionConfigured
+        ? 'Vision AI · Cloud OCR (Gaussian preprocessed)'
+        : 'Vision AI selected (cloud key not configured)'
+      : handwritingModelState === 'downloading'
+        ? `Downloading TrOCR handwriting model${downloadProgress > 0 ? ` (${downloadProgress}%)` : '...'}`
+        : localModelReady === true || printedModelReady === true
+          ? `Offline ${handwritingModelTier || 'TrOCR'} + ${printedModelTier || 'Tesseract'} · ${
+              offlineProfile === 'handwriting'
+                ? 'Handwriting'
+                : offlineProfile === 'printed'
+                  ? 'Printed'
+                  : 'Auto-detect'
+            }`
+          : localModelReady === false
+            ? downloadError
+              ? 'Offline model pending download'
+              : 'Offline OCR initializing...'
+            : 'Checking offline OCR...';
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 pt-3 pb-24 lg:px-8 lg:py-8 space-y-4">
       {/* Studio Intro Strip */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-lg sm:text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             Live OCR Scanner
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-            Automatically detects printed, handwritten, and mixed text offline.
+            Local TrOCR handwriting & Tesseract printed OCR with optional AI list structuring.
           </p>
         </div>
 
-        {sourceImage && !reviewSheetOpen && (
-          <button
-            type="button"
-            onClick={() => setReviewSheetOpen(true)}
-            className="min-h-[44px] px-3.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 text-xs font-medium whitespace-nowrap shrink-0"
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Primary OCR Mode Selector: Offline Local vs Vision AI */}
+          <div
+            className="inline-flex items-center p-0.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800"
+            role="group"
+            aria-label="OCR Mode"
           >
-            Resume Scan
-          </button>
-        )}
+            <button
+              type="button"
+              onClick={() => setOcrMode('offline')}
+              className={`min-h-[34px] px-3 rounded-lg text-xs font-medium transition-colors ${
+                ocrMode === 'offline'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              Offline Local
+            </button>
+            <button
+              type="button"
+              onClick={() => setOcrMode('vision')}
+              className={`min-h-[34px] px-3 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1 ${
+                ocrMode === 'vision'
+                  ? 'bg-white dark:bg-zinc-800 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>Vision AI</span>
+            </button>
+          </div>
+
+          {sourceImage && !reviewSheetOpen && (
+            <button
+              type="button"
+              onClick={() => setReviewSheetOpen(true)}
+              className="min-h-[38px] px-3.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 text-xs font-medium whitespace-nowrap shrink-0"
+            >
+              Resume Scan
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* OCR Mode Selector */}
-      <div className="flex items-center gap-1.5 p-1 bg-zinc-100 dark:bg-zinc-800/80 rounded-xl overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setOcrMode('auto')}
-          className={`flex-1 min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap ${
-            ocrMode === 'auto'
-              ? 'bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-              : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-          }`}
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>Auto</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setOcrMode('handwriting')}
-          className={`flex-1 min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap ${
-            ocrMode === 'handwriting'
-              ? 'bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-              : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-          }`}
-        >
-          <PenTool className="w-3.5 h-3.5" />
-          <span>Cursive / Handwriting</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setOcrMode('printed')}
-          className={`flex-1 min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap ${
-            ocrMode === 'printed'
-              ? 'bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-              : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-          }`}
-        >
-          <FileText className="w-3.5 h-3.5" />
-          <span>Printed</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setOcrMode('offline')}
-          className={`flex-1 min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap ${
-            ocrMode === 'offline'
-              ? 'bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-              : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-          }`}
-        >
-          <HardDrive className="w-3.5 h-3.5" />
-          <span>Offline Local</span>
-        </button>
-      </div>
+      {/* Offline Engine Sub-Profile & Auto Model Provisioning Bar */}
+      {ocrMode === 'offline' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200 dark:border-zinc-800">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+              Offline Engine:
+            </span>
+            <div
+              className="inline-flex items-center p-0.5 rounded-lg bg-zinc-200/70 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800"
+              role="group"
+              aria-label="Offline OCR Profile"
+            >
+              {(
+                [
+                  { id: 'auto', label: 'Auto' },
+                  { id: 'handwriting', label: 'Handwriting (TrOCR)' },
+                  { id: 'printed', label: 'Printed (Tesseract)' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setOfflineProfile(opt.id)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                    offlineProfile === opt.id
+                      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-xs'
+                      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {handwritingModelState === 'downloading' && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>
+                  Downloading TrOCR handwriting model
+                  {downloadProgress > 0 ? ` (${downloadProgress}%)` : '...'}
+                </span>
+              </span>
+            )}
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={aiEnhancementEnabled}
+                onChange={(e) => setAiEnhancementEnabled(e.target.checked)}
+                className="rounded border-zinc-300 dark:border-zinc-700 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>AI List Enhancement</span>
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* Main Feature: Always-Open Live Camera Viewfinder + Photo/Drop Fallback */}
       <CameraCapture
@@ -853,6 +1051,12 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                 </div>
               )}
 
+              {aiNotice && (
+                <div className="p-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 rounded-xl text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                  {aiNotice}
+                </div>
+              )}
+
               {isScanning ? (
                 <div className="py-10 flex flex-col items-center justify-center gap-3 text-center">
                   <Loader2 className="w-6 h-6 animate-spin text-indigo-600 dark:text-indigo-400" />
@@ -860,13 +1064,13 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                     {statusStep || 'Reading note...'}
                   </p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Cleaning shadows, removing notebook lines, and extracting text
+                    Cleaning margins, removing notebook lines, and extracting text
                   </p>
                 </div>
               ) : draft ? (
                 /* Stage 2: Editable Reminder Draft */
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <button
                       type="button"
                       onClick={() => setDraft(null)}
@@ -875,9 +1079,24 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                       <ArrowLeft className="w-3.5 h-3.5" />
                       <span>Edit raw OCR text</span>
                     </button>
-                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {draft.providerLabel}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={isEnhancingAi}
+                        onClick={handleCreateListWithAi}
+                        className="min-h-[32px] px-2.5 rounded-lg border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[11px] font-medium inline-flex items-center gap-1 hover:bg-indigo-100 dark:hover:bg-indigo-950/70 disabled:opacity-50"
+                      >
+                        {isEnhancingAi ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3 h-3" />
+                        )}
+                        <span>Create List with AI</span>
+                      </button>
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {draft.providerLabel}
+                      </span>
+                    </div>
                   </div>
 
                   <div>
@@ -1121,21 +1340,11 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                       )}
                     </div>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {scanMeta?.appliedSteps && scanMeta.appliedSteps.length > 0 && (
-                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono-nums truncate">
-                            {scanMeta.appliedSteps.slice(0, 5).join(' · ')}
-                          </p>
-                        )}
-                        {scanMeta?.detectedStyle && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-[11px] font-medium">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                            <span>
-                              Style: {scanMeta.detectedStyle === 'handwriting' ? 'Cursive / Handwriting' : scanMeta.detectedStyle === 'printed' ? 'Printed' : 'Mixed'}
-                            </span>
-                          </span>
-                        )}
-                      </div>
+                      {scanMeta?.appliedSteps && scanMeta.appliedSteps.length > 0 && (
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono-nums truncate">
+                          {scanMeta.appliedSteps.slice(0, 5).join(' · ')}
+                        </p>
+                      )}
                       {scanMeta?.accuracyScore !== undefined && (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium">
                           <CheckCircle2 className="w-3 h-3 text-emerald-500" />
@@ -1145,30 +1354,6 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center justify-between pt-1">
-                      <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                        Extracted text
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handleCopyText}
-                        disabled={!editableText.trim()}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 transition-colors"
-                        title="Copy extracted text to clipboard"
-                      >
-                        {copied ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-emerald-500" />
-                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">Copied!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>Copy Text</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
                     <textarea
                       rows={5}
                       value={editableText}
@@ -1176,40 +1361,6 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                       placeholder="Review or edit recognized text before converting..."
                       className="w-full p-3.5 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-base sm:text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-indigo-500 leading-relaxed"
                     />
-
-                    {/* Line-by-Line Confidence Scores Breakdown */}
-                    {lineConfidences.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-                          <span className="font-medium">Line-by-Line Confidence Scores</span>
-                          <span className="font-mono-nums text-[11px]">{lineConfidences.length} lines</span>
-                        </div>
-                        <div className="space-y-1 max-h-36 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/70 p-2">
-                          {lineConfidences.map((line, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                            >
-                              <span className="text-[11px] font-mono text-zinc-400 shrink-0">L{idx + 1}</span>
-                              <span className="text-zinc-800 dark:text-zinc-200 truncate flex-1 font-mono-nums">
-                                {line.text || '(empty line)'}
-                              </span>
-                              <span
-                                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium font-mono-nums shrink-0 ${
-                                  line.confidence >= 90
-                                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                                    : line.confidence >= 75
-                                    ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
-                                    : 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
-                                }`}
-                              >
-                                {line.confidence}%
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
 
                     {/* On-device Detected Word Squares inspector strip */}
                     {detectedWords.length > 0 && (
@@ -1273,15 +1424,48 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                     />
                   </div>
 
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800">
+                    <label className="inline-flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={aiEnhancementEnabled}
+                        onChange={(e) => setAiEnhancementEnabled(e.target.checked)}
+                        className="rounded border-zinc-300 dark:border-zinc-700 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>AI List Enhancement</span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={isEnhancingAi || !editableText.trim()}
+                      onClick={handleCreateListWithAi}
+                      className="min-h-[34px] px-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-300 text-xs font-medium inline-flex items-center gap-1.5 hover:bg-indigo-100 dark:hover:bg-indigo-950 disabled:opacity-50"
+                    >
+                      {isEnhancingAi ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3.5 h-3.5" />
+                      )}
+                      <span>Create List with AI</span>
+                    </button>
+                  </div>
+
                   {sourceImage && (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => runExtractionPipeline(sourceImage)}
+                        onClick={() => runExtractionPipeline(sourceImage, { profileOverride: 'handwriting' })}
                         className="min-h-[44px] px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Re-scan</span>
+                        <span>Handwriting (TrOCR)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => runExtractionPipeline(sourceImage, { profileOverride: 'printed' })}
+                        className="min-h-[44px] px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Printed (Tesseract)</span>
                       </button>
                       <button
                         type="button"
@@ -1290,7 +1474,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                             forceVision: true,
                           })
                         }
-                        className="min-h-[44px] px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                        className="col-span-2 sm:col-span-1 min-h-[44px] px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
                         <span>Try Vision AI</span>

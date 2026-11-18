@@ -139,7 +139,7 @@ export function parseReminderLocally(
 
   const checklist =
     lines.length > 1
-      ? lines.slice(0, 8).map((line, i) => ({
+      ? lines.slice(0, 50).map((line, i) => ({
           id: `chk-${i + 1}`,
           text: line,
           completed: false,

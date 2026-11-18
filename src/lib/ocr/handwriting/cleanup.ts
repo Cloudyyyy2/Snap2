@@ -11,6 +11,8 @@ export {
   type DeskewResult,
   type PerspectiveWarpOptions,
   type PerspectiveResult,
+  type DeslantOptions,
+  type DeslantResult,
   orderQuadCorners,
   solveHomography,
   applyHomographyPoint,
@@ -19,6 +21,7 @@ export {
   estimateSkewAngle,
   rotateGrayscale,
   deskewGrayscale,
+  deslantGrayscale,
   correctDocumentPerspective,
 } from '../geometry';
 
@@ -203,16 +206,29 @@ export function filterTextComponents(
   const totalPixels = w * h;
   const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
-  const compPixels: number[] = [];
   const edgeMarginX = Math.max(2, Math.round(w * 0.004));
   const edgeMarginY = Math.max(2, Math.round(h * 0.004));
+
+  interface KeptComp {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    cw: number;
+    ch: number;
+    area: number;
+    pixels: number[];
+    rejected: boolean;
+  }
+
+  const keptComps: KeptComp[] = [];
 
   for (let startIdx = 0; startIdx < totalPixels; startIdx++) {
     if (visited[startIdx] || binary[startIdx] !== 0) continue;
 
     visited[startIdx] = 1;
     queue.length = 0;
-    compPixels.length = 0;
+    const compPixels: number[] = [];
     queue.push(startIdx);
 
     let head = 0;
@@ -265,7 +281,12 @@ export function filterTextComponents(
     if (cw > w * 0.65 && ch > h * 0.22) continue;
     if (ch > h * 0.42) continue;
 
-    // Reject large edge-touching clutter (hands holding paper, desk edges, spiral coils)
+    // Reject solid dark horizontal footer/header bars touching top/bottom edges
+    if (cw > w * 0.5 && (minY <= edgeMarginY || maxY >= h - 1 - edgeMarginY)) {
+      continue;
+    }
+
+    // Reject large edge-touching clutter (hands holding paper, desk edges, spiral spines)
     if (touchesEdge && (ch > h * 0.18 || cw > w * 0.45 || area > totalPixels * 0.012)) {
       continue;
     }
@@ -274,8 +295,112 @@ export function filterTextComponents(
     if (cw > w * 0.65 && ch <= 5) continue;
     if (ch > h * 0.45 && cw <= 6) continue;
 
-    for (let i = 0; i < compPixels.length; i++) {
-      out[compPixels[i]] = 0;
+    keptComps.push({
+      minX,
+      maxX,
+      minY,
+      maxY,
+      cw,
+      ch,
+      area,
+      pixels: compPixels,
+      rejected: false,
+    });
+  }
+
+  // Strip spiral-binding coils along left & right vertical margins
+  const stripMarginSpiralCoils = (side: 'left' | 'right') => {
+    const candidates = keptComps.filter((c) => {
+      if (c.rejected) return false;
+      if (c.ch < 4 || c.ch > h * 0.12 || c.cw > w * 0.12) return false;
+
+      if (side === 'left') {
+        if (c.maxX >= w * 0.14) return false;
+        // Verify no immediate horizontal text continuation to the right on the same row band
+        const hasRightNeighbor = keptComps.some(
+          (other) =>
+            other !== c &&
+            !other.rejected &&
+            other.minX > c.maxX &&
+            other.minX <= c.maxX + Math.max(10, Math.round(c.ch * 0.85)) &&
+            other.maxY >= c.minY - 4 &&
+            other.minY <= c.maxY + 4
+        );
+        return !hasRightNeighbor;
+      } else {
+        if (c.minX <= w * 0.86) return false;
+        const hasLeftNeighbor = keptComps.some(
+          (other) =>
+            other !== c &&
+            !other.rejected &&
+            other.maxX < c.minX &&
+            other.maxX >= c.minX - Math.max(10, Math.round(c.ch * 0.85)) &&
+            other.maxY >= c.minY - 4 &&
+            other.minY <= c.maxY + 4
+        );
+        return !hasLeftNeighbor;
+      }
+    });
+
+    if (candidates.length === 0) return;
+
+    // Group vertically sorted candidates that align along the margin strip
+    const sorted = [...candidates].sort((a, b) => (a.minY + a.maxY) - (b.minY + b.maxY));
+
+    // Check if edge-touching margin components exist (>= 2 touching extreme edge)
+    const edgeTouching = sorted.filter((c) =>
+      side === 'left' ? c.minX <= Math.max(edgeMarginX, Math.round(w * 0.015)) : c.maxX >= w - 1 - Math.max(edgeMarginX, Math.round(w * 0.015))
+    );
+    if (edgeTouching.length >= 2) {
+      for (const c of edgeTouching) {
+        c.rejected = true;
+      }
+    }
+
+    // Detect periodic repeating coils in vertical margin strip (x < 0.14*w or x > 0.86*w)
+    const aligned = sorted.filter((c) =>
+      side === 'left' ? c.minX <= w * 0.06 || c.maxX < w * 0.14 : c.maxX >= w * 0.94 || c.minX > w * 0.86
+    );
+    if (aligned.length >= 3) {
+      // Cluster by similar X-center so random words at varying indents don't trigger
+      const xCenters = aligned.map((c) => (c.minX + c.maxX) * 0.5).sort((a, b) => a - b);
+      const medianX = xCenters[Math.floor(xCenters.length * 0.5)];
+      const colAligned = aligned.filter(
+        (c) => Math.abs((c.minX + c.maxX) * 0.5 - medianX) <= Math.max(10, w * 0.045)
+      );
+
+      if (colAligned.length >= 3) {
+        const yCenters = colAligned.map((c) => (c.minY + c.maxY) * 0.5);
+        const gaps: number[] = [];
+        for (let i = 1; i < yCenters.length; i++) {
+          const g = yCenters[i] - yCenters[i - 1];
+          if (g >= 6) gaps.push(g);
+        }
+        if (gaps.length >= 2) {
+          const sortedGaps = [...gaps].sort((a, b) => a - b);
+          const medianGap = sortedGaps[Math.floor(sortedGaps.length * 0.5)];
+          const consistentGaps = gaps.filter(
+            (g) => Math.abs(g - medianGap) <= Math.max(4, medianGap * 0.42)
+          ).length;
+          if (consistentGaps >= Math.max(2, Math.floor(gaps.length * 0.6))) {
+            for (const c of colAligned) {
+              c.rejected = true;
+            }
+          }
+        }
+      }
+    }
+  };
+
+  if (w >= 160 && h >= 120) {
+    stripMarginSpiralCoils('left');
+    stripMarginSpiralCoils('right');
+  }
+
+  for (const comp of keptComps) {
+    if (comp.rejected) continue;
+    for (let i = 0; i < comp.pixels.length; i++) {
+      out[comp.pixels[i]] = 0;
     }
   }
 

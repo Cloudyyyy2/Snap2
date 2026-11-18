@@ -27,6 +27,7 @@ monday tuesday wednesday thursday friday saturday sunday
 january february march april may june july august september october november december
 tomorrow yesterday asap urgent invoice receipt dentist prescription pharmacy clinic garage mechanic plumber electrician insurance mortgage rent lease tuition deposit refund renewal ticket boarding flight hotel reservation
 milk bread eggs butter cheese coffee tea fruit lunch breakfast clean laundry trash email submit renew cancel pickup dropoff pack schedule deadline reminder electric
+apple apples asparagus au avocado bacon bagel bagels banana bananas basil beans beef beer berries blueberries broccoli burger burgers cabbage cake carrot carrots celery cereal chicken chocolate chocolat cilantro cookies corn crackers cream crisps croissant cucumber curry flour garlic ginger grapes greens ham herbs honey ice jam juice kale lamb lemon lemons lentils lettuce lime mango mayo meat mince mushroom mushrooms mustard noodles nuts oatmeal oats oil olive olives onion onions orange oranges pain pan pancakes pasta peaches peanut pears peas pepper peppers pineapple pizza pork potato potatoes prawns pretzels rice rolls salad salmon salsa salt sauce sausage sausages shrimp snack snacks soap soda soup spinach steak strawberries sugar sundried toast tomato tomatoes towels toothpaste shampoo detergent tissue tissues tuna turkey vinegar wine wraps yogurt zucchini
 `;
 
 let cachedLexicon: Set<string> | null = null;
