@@ -183,6 +183,26 @@ describe('handwriting image cleanup & segmentation', () => {
     expect(lines[1].text).toBe('buy milk tomorrow');
     // Capitalized proper noun stays intact
     expect(lines[2].text).toContain('Bramwell');
+
+    const phraseLines = postprocessHandwrittenLines([
+      { text: 'as PEAS', confidence: 0.9 },
+      { text: 'Pan an chocolat', confidence: 0.9 },
+    ]);
+    expect(phraseLines.map((l) => l.text)).toEqual(['asparagus', 'Pain au chocolat']);
+
+    const wikiAndDateHallucinations = postprocessHandwrittenLines([
+      {
+        text: 'What like hereRelated changesUpload fileSpecial pagesPermanent linkPage informationCite this pageWikidata item',
+        confidence: 0.85,
+      },
+      { text: '1961 02 19 April 19 1961 age the age of birth', confidence: 0.85 },
+      { text: 'they this that then tray tiny', confidence: 0.55 },
+      { text: 'buns pesto met', confidence: 0.55 },
+    ]);
+    expect(wikiAndDateHallucinations.map((l) => l.text)).toEqual([
+      'they this that then tray tiny',
+      'buns pesto met',
+    ]);
   });
 
   it('autoInvertIfDarkMode flips dark-mode screenshots while leaving light paper unchanged', async () => {

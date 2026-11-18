@@ -17,10 +17,12 @@ import {
   cropDarkBordersAndMargins,
   removeRuledLines,
   filterTextComponents,
+  computeRecommendedDpiScale,
 } from './handwriting/cleanup';
 import { detectHandwriting } from './handwriting/detect';
-import { segmentLines, splitWideLineBox, cropLine } from './handwriting/lines';
+import { segmentLines, splitWideLineBox, cropLine, LineBox } from './handwriting/lines';
 import { postprocessHandwrittenLines } from './postprocess';
+import { hasErraticTesseractArtifacts, scoreTextPlausibility } from './plausibility';
 import { correctTextWithLexicon } from './wordDataset';
 import { parseReminderLocally } from '../../../server/localReminderParser';
 
@@ -120,6 +122,41 @@ function grayscaleToDataUrl(gray: Uint8ClampedArray, width: number, height: numb
   return canvas.toDataURL('image/png');
 }
 
+function upscaleGrayscaleCanvas(
+  gray: Uint8ClampedArray,
+  width: number,
+  height: number,
+  targetW: number,
+  targetH: number
+): Uint8ClampedArray {
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = width;
+  srcCanvas.height = height;
+  const srcCtx = srcCanvas.getContext('2d');
+  if (!srcCtx) return gray;
+  const srcImg = srcCtx.createImageData(width, height);
+  for (let i = 0; i < gray.length; i++) {
+    const v = gray[i];
+    const j = i * 4;
+    srcImg.data[j] = v;
+    srcImg.data[j + 1] = v;
+    srcImg.data[j + 2] = v;
+    srcImg.data[j + 3] = 255;
+  }
+  srcCtx.putImageData(srcImg, 0, 0);
+
+  const dstCanvas = document.createElement('canvas');
+  dstCanvas.width = targetW;
+  dstCanvas.height = targetH;
+  const dstCtx = dstCanvas.getContext('2d', { willReadFrequently: true });
+  if (!dstCtx) return gray;
+  dstCtx.imageSmoothingEnabled = true;
+  dstCtx.imageSmoothingQuality = 'high';
+  dstCtx.drawImage(srcCanvas, 0, 0, targetW, targetH);
+  const dstImg = dstCtx.getImageData(0, 0, targetW, targetH);
+  return toGrayscale(dstImg.data, targetW, targetH, 4);
+}
+
 async function recognizePrintedInBrowser(
   gray: Uint8ClampedArray,
   width: number,
@@ -200,7 +237,22 @@ export async function runBrowserLocalOcr(params: {
     appliedSteps.push(`deskew(${deskew.angleDeg}deg)`);
   }
 
-  const noRules = removeRuledLines(workGray, w, h);
+  let noRules = removeRuledLines(workGray, w, h);
+  const dpiRadius = Math.max(14, Math.min(36, Math.round(Math.min(w, h) / 28)));
+  const dpiBin = binarizeSauvola(noRules, w, h, dpiRadius, 0.16);
+  const dpiCleanBin = w >= 280 && h >= 200 ? filterTextComponents(dpiBin, w, h) : dpiBin;
+  const rawDpiScale = computeRecommendedDpiScale(dpiCleanBin, w, h);
+  const maxDim = isMobileBrowser() ? 960 : 1280;
+  const effectiveScale = rawDpiScale >= 1.5 ? Math.min(rawDpiScale, maxDim / Math.max(w, h)) : 1;
+  if (effectiveScale >= 1.25) {
+    const targetW = Math.max(1, Math.round(w * effectiveScale));
+    const targetH = Math.max(1, Math.round(h * effectiveScale));
+    noRules = upscaleGrayscaleCanvas(noRules, w, h, targetW, targetH);
+    w = targetW;
+    h = targetH;
+    appliedSteps.push(`dpi-upscale(${Number(effectiveScale.toFixed(2))}x)`);
+  }
+
   const contrastGray = enhanceInkContrast(noRules, w, h);
   const contourVote = twoPassContourVoting(noRules, w, h);
   const cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(contourVote.binary, w, h) : contourVote.binary;
@@ -213,6 +265,52 @@ export async function runBrowserLocalOcr(params: {
     params.ocrProfile === 'handwriting' ||
     (params.ocrProfile === 'auto' && detection.isHandwriting);
 
+  const runBrowserTrOcr = async (targetBoxes: LineBox[]) => {
+    const rec = await getBrowserTrOcrPipeline(params.onProgress);
+    params.onProgress?.(`Recognizing ${targetBoxes.length} handwritten lines in browser...`);
+    const rawResults: Array<{ text: string; confidence: number; bbox: LineBox }> = [];
+
+    for (let lineIdx = 0; lineIdx < targetBoxes.length; lineIdx++) {
+      const box = targetBoxes[lineIdx];
+      params.onProgress?.(`Recognizing line ${lineIdx + 1} of ${targetBoxes.length}...`);
+      const chunks = splitWideLineBox(closedForSeg, w, h, box, 6.5);
+      const chunkTexts: string[] = [];
+      for (const chunkBox of chunks) {
+        const cropped = cropLine(contrastGray, w, h, chunkBox, 16);
+        const deslanted = deslantGrayscale(cropped.data, cropped.width, cropped.height);
+        const lineUrl = grayscaleToDataUrl(deslanted.data, deslanted.width, deslanted.height);
+        if (!lineUrl) continue;
+        const out = await rec(lineUrl, {
+          num_beams: isMobileBrowser() ? 2 : 4,
+          max_new_tokens: 64,
+          early_stopping: true,
+        });
+        const first = Array.isArray(out) ? out[0] : out;
+        if (typeof first?.generated_text === 'string' && first.generated_text.trim()) {
+          chunkTexts.push(first.generated_text.trim());
+        }
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const joined = chunkTexts.join(' ').trim();
+      if (joined) {
+        rawResults.push({ text: joined, confidence: 0.88, bbox: box });
+      }
+    }
+
+    const cleaned = postprocessHandwrittenLines(rawResults);
+    const hwLines = cleaned.map((l) => ({
+      text: l.text,
+      confidence: l.confidence,
+      bbox: l.bbox || { x0: 0, y0: 0, x1: w, y1: h },
+    }));
+    const hwText = hwLines.map((l) => l.text).join('\n');
+    const qualityScore =
+      hwLines.length > 0
+        ? hwLines.reduce((acc, l) => acc + l.confidence, 0) / hwLines.length
+        : 0;
+    return { text: hwText, lines: hwLines, qualityScore };
+  };
+
   let text = '';
   let lines: Array<{ text: string; confidence: number; bbox: { x0: number; y0: number; x1: number; y1: number } }> = [];
   let recognizer: 'trocr-host' | 'tesseract-host' = useHandwriting ? 'trocr-host' : 'tesseract-host';
@@ -220,44 +318,9 @@ export async function runBrowserLocalOcr(params: {
 
   if (useHandwriting && lineBoxes.length > 0) {
     try {
-      const rec = await getBrowserTrOcrPipeline(params.onProgress);
-      params.onProgress?.(`Recognizing ${lineBoxes.length} handwritten lines in browser...`);
-      const rawResults: Array<{ text: string; confidence: number; bbox: any }> = [];
-
-      for (let lineIdx = 0; lineIdx < lineBoxes.length; lineIdx++) {
-        const box = lineBoxes[lineIdx];
-        params.onProgress?.(`Recognizing line ${lineIdx + 1} of ${lineBoxes.length}...`);
-        const chunks = splitWideLineBox(closedForSeg, w, h, box, 6.5);
-        const chunkTexts: string[] = [];
-        for (const chunkBox of chunks) {
-          const cropped = cropLine(contrastGray, w, h, chunkBox, 16);
-          const deslanted = deslantGrayscale(cropped.data, cropped.width, cropped.height);
-          const lineUrl = grayscaleToDataUrl(deslanted.data, deslanted.width, deslanted.height);
-          if (!lineUrl) continue;
-          const out = await rec(lineUrl, {
-            num_beams: isMobileBrowser() ? 2 : 4,
-            max_new_tokens: 64,
-            early_stopping: true,
-          });
-          const first = Array.isArray(out) ? out[0] : out;
-          if (typeof first?.generated_text === 'string' && first.generated_text.trim()) {
-            chunkTexts.push(first.generated_text.trim());
-          }
-          await new Promise((r) => setTimeout(r, 0));
-        }
-        const joined = chunkTexts.join(' ').trim();
-        if (joined) {
-          rawResults.push({ text: joined, confidence: 0.88, bbox: box });
-        }
-      }
-
-      const cleaned = postprocessHandwrittenLines(rawResults);
-      lines = cleaned.map((l) => ({
-        text: l.text,
-        confidence: l.confidence,
-        bbox: l.bbox || { x0: 0, y0: 0, x1: w, y1: h },
-      }));
-      text = lines.map((l) => l.text).join('\n');
+      const hw = await runBrowserTrOcr(lineBoxes);
+      lines = hw.lines;
+      text = hw.text;
     } catch (trocrErr: any) {
       const reason = trocrErr?.message || String(trocrErr);
       throw new Error(
@@ -269,6 +332,49 @@ export async function runBrowserLocalOcr(params: {
     const printed = await recognizePrintedInBrowser(contrastGray, w, h);
     text = printed.text;
     lines = printed.lines;
+
+    if (params.ocrProfile === 'auto' && lineBoxes.length > 0) {
+      const printedQuality =
+        printed.lines.length > 0
+          ? printed.lines.reduce((acc, l) => acc + l.confidence, 0) / printed.lines.length
+          : 0;
+      const printedPlaus = scoreTextPlausibility(printed.text, printedQuality, printed.lines);
+      const printedErratic = hasErraticTesseractArtifacts(printed.text, printed.lines);
+
+      const shouldCrossCheck =
+        !printed.text.trim() ||
+        printedErratic ||
+        printedPlaus < 0.68 ||
+        printedQuality < 0.78 ||
+        lineBoxes.length >= 3;
+
+      if (shouldCrossCheck) {
+        try {
+          const hw = await runBrowserTrOcr(lineBoxes);
+          const hwPlaus = scoreTextPlausibility(hw.text, hw.qualityScore, hw.lines);
+          if (
+            hw.text.trim() &&
+            (hwPlaus > printedPlaus + 0.02 ||
+              printedErratic ||
+              printedQuality < 0.72 ||
+              !printed.text.trim())
+          ) {
+            text = hw.text;
+            lines = hw.lines;
+            recognizer = 'trocr-host';
+            detectedStyle = 'handwriting';
+            appliedSteps.push('auto-crosscheck-trocr');
+          }
+        } catch (trocrErr: any) {
+          if (!printed.text.trim()) {
+            const reason = trocrErr?.message || String(trocrErr);
+            throw new Error(
+              `In-browser handwriting model failed to load (${reason}). Please check your internet connection for first-time model download or use Printed mode.`
+            );
+          }
+        }
+      }
+    }
   }
 
   if (text.trim()) {
@@ -294,6 +400,7 @@ export async function runBrowserLocalOcr(params: {
     lines,
     detectedStyle,
     recognizer,
+    engineOrigin: 'browser' as const,
     skewAngle: deskew.angleDeg,
     appliedSteps,
     regionsCount: 1,

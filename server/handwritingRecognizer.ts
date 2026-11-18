@@ -41,6 +41,10 @@ import {
   postprocessHandwrittenLines,
   detectAndCleanHallucination,
 } from '../src/lib/ocr/postprocess';
+import {
+  hasErraticTesseractArtifacts,
+  scoreTextPlausibility,
+} from '../src/lib/ocr/plausibility';
 import { getCompactLexicon } from '../src/lib/ocr/compactLexicon';
 import {
   correctTextWithLexicon,
@@ -195,97 +199,6 @@ function scoreRecognizedLine(text: string): number {
   }
   const lexRatio = (known + validAlpha * 0.65) / words.length;
   return Number(Math.min(0.92, 0.52 + lexRatio * 0.4).toFixed(2));
-}
-
-function hasErraticTesseractArtifacts(
-  text: string,
-  lines?: Array<{ confidence: number }>
-): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return true;
-
-  if (lines && lines.some((l) => l.confidence < 0.72)) {
-    return true;
-  }
-
-  const tokens = trimmed.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return true;
-
-  let strayDigitOrQuoteCount = 0;
-  for (const tok of tokens) {
-    if (
-      /^[0-9]$/.test(tok) ||
-      /^0{2,}[,.]?0*$/.test(tok) ||
-      /^["'“”`]+$/.test(tok) ||
-      /^\d+\/\d*,?$/.test(tok)
-    ) {
-      strayDigitOrQuoteCount++;
-    }
-  }
-
-  if (strayDigitOrQuoteCount >= 2 && strayDigitOrQuoteCount / tokens.length >= 0.14) {
-    return true;
-  }
-
-  // Repeated zero groups like "0 0000,000" or isolated quotes followed by capitalized fragments
-  if (/\b0\s+0{3,}[,.]?0*\b/.test(trimmed) || (trimmed.match(/"/g) || []).length >= 2) {
-    return true;
-  }
-
-  return false;
-}
-
-function scoreTextPlausibility(
-  text: string,
-  qualityScore: number,
-  lines?: Array<{ confidence: number }>
-): number {
-  const trimmed = text.trim();
-  if (!trimmed) return 0;
-
-  const rawTokens = trimmed.split(/\s+/).filter(Boolean);
-  if (rawTokens.length === 0) return 0;
-
-  const lexicon = getCompactLexicon();
-  let lexiconOrNumericHits = 0;
-  let alphaNumericTokens = 0;
-  let weirdSymbolTokens = 0;
-  let strayNoiseTokens = 0;
-
-  for (const rawTok of rawTokens) {
-    const cleaned = rawTok.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
-    if (!cleaned) {
-      weirdSymbolTokens++;
-      continue;
-    }
-    if (/^[0-9]$/.test(rawTok) || /^0{2,}/.test(cleaned) || /^["']/.test(rawTok)) {
-      strayNoiseTokens++;
-    }
-    alphaNumericTokens++;
-    if (
-      lexicon.has(cleaned) ||
-      /^\d+(?:[.,:/-]\d+)*(?:am|pm|k|m)?$/.test(cleaned) ||
-      (/^[a-z]{3,}$/.test(cleaned) && /[aeiouy]/.test(cleaned))
-    ) {
-      lexiconOrNumericHits++;
-    }
-  }
-
-  if (alphaNumericTokens === 0) return 0.05;
-
-  const lexRatio = lexiconOrNumericHits / rawTokens.length;
-  const cleanRatio = Math.max(0, 1 - weirdSymbolTokens / rawTokens.length);
-  const noisePenalty = Math.min(0.35, (strayNoiseTokens / rawTokens.length) * 0.85);
-  const lowConfPenalty =
-    lines && lines.length > 0 && lines.some((l) => l.confidence < 0.7) ? 0.12 : 0;
-  const clampedQuality = Math.max(0, Math.min(1, qualityScore));
-
-  return Number(
-    Math.max(
-      0,
-      clampedQuality * 0.5 + lexRatio * 0.35 + cleanRatio * 0.15 - noisePenalty - lowConfPenalty
-    ).toFixed(3)
-  );
 }
 
 async function prepareTrOcrRawImage(crop: CroppedLine): Promise<RawImage> {
@@ -989,26 +902,31 @@ export async function processImageWithLocalOcr(params: {
         });
       }
 
-      // Selective TrOCR fallback only if PARSeq yielded empty or ultra-low-confidence wide line
+      // Selective TrOCR fallback when PARSeq yields empty, low-confidence, or low-plausibility line
       if (handwritingModelReady) {
         for (let i = 0; i < rawLines.length; i++) {
           const rl = rawLines[i];
           const bw = rl.bbox.x1 - rl.bbox.x0 + 1;
-          const bh = Math.max(1, rl.bbox.y1 - rl.bbox.y0 + 1);
-          if ((!rl.text || (rl.confidence < 0.38 && bw / bh >= 4.0)) && bw >= 60) {
+          const rlPlaus = rl.text ? scoreTextPlausibility(rl.text, rl.confidence) : 0;
+          if ((!rl.text || rl.confidence < 0.62 || rlPlaus < 0.62) && bw >= 32) {
             const fallbackCrop = cropLine(contrastGray, w, h, rl.bbox, 10);
             const [trocrOut] = await recognizeLines([fallbackCrop]);
-            if (
-              trocrOut?.text &&
-              (!rl.text ||
-                scoreTextPlausibility(trocrOut.text, trocrOut.confidence) >
-                  scoreTextPlausibility(rl.text, rl.confidence) + 0.1)
-            ) {
-              rawLines[i] = {
-                text: trocrOut.text,
-                confidence: trocrOut.confidence,
-                bbox: rl.bbox,
-              };
+            if (trocrOut?.text) {
+              const { text: cleanTrocr, isHallucination } = detectAndCleanHallucination(
+                trocrOut.text
+              );
+              if (
+                !isHallucination &&
+                cleanTrocr &&
+                (!rl.text ||
+                  scoreTextPlausibility(cleanTrocr, trocrOut.confidence) > rlPlaus + 0.1)
+              ) {
+                rawLines[i] = {
+                  text: cleanTrocr,
+                  confidence: trocrOut.confidence,
+                  bbox: rl.bbox,
+                };
+              }
             }
           }
         }
@@ -1078,13 +996,45 @@ export async function processImageWithLocalOcr(params: {
     }
 
     const cleanedLines = postprocessHandwrittenLines(rawLines);
-    const droppedHallucinations = Math.max(0, rawLines.length - cleanedLines.length);
-
     const finalLines: LocalOcrLineResult[] = cleanedLines.map((l) => ({
       text: l.text,
       confidence: l.confidence,
       bbox: l.bbox || { x0: 0, y0: 0, x1: w, y1: h },
     }));
+
+    if (parseqModelReady && handwritingModelReady && finalLines.length < targetLineBoxes.length) {
+      const missingBoxes = targetLineBoxes.filter(
+        (box) =>
+          !finalLines.some(
+            (fl) =>
+              fl.bbox.x0 === box.x0 &&
+              fl.bbox.y0 === box.y0 &&
+              fl.bbox.x1 === box.x1 &&
+              fl.bbox.y1 === box.y1
+          )
+      );
+      for (const missingBox of missingBoxes) {
+        const bw = missingBox.x1 - missingBox.x0 + 1;
+        if (bw < 32) continue;
+        const fallbackCrop = cropLine(contrastGray, w, h, missingBox, 10);
+        const [trocrOut] = await recognizeLines([fallbackCrop]);
+        if (trocrOut?.text) {
+          const { text: cleanTrocr, isHallucination } = detectAndCleanHallucination(trocrOut.text);
+          if (!isHallucination && cleanTrocr) {
+            finalLines.push({
+              text: cleanTrocr,
+              confidence: trocrOut.confidence,
+              bbox: missingBox,
+            });
+          }
+        }
+      }
+      finalLines.sort((a, b) =>
+        Math.abs(a.bbox.y0 - b.bbox.y0) > 16 ? a.bbox.y0 - b.bbox.y0 : a.bbox.x0 - b.bbox.x0
+      );
+    }
+
+    const droppedHallucinations = Math.max(0, targetLineBoxes.length - finalLines.length);
 
     const fullText = finalLines.map((l) => l.text).join('\n');
     const meanLineConf =
@@ -1245,6 +1195,24 @@ export async function processImageWithLocalOcr(params: {
     let usedHandwriting = false;
     let totalDropped = 0;
 
+    const hasSideBySideColumns =
+      regions.length > 1 &&
+      regions.some((a, idx) =>
+        regions.some(
+          (b, jdx) =>
+            idx !== jdx &&
+            (a.x1 < b.x0 - 20 || b.x1 < a.x0 - 20) &&
+            Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 20
+        )
+      );
+
+    const sortRegionLines = <T extends { bbox: { x0: number; y0: number } }>(
+      linesToSort: T[]
+    ): T[] =>
+      [...linesToSort].sort((a, b) =>
+        Math.abs(a.bbox.y0 - b.bbox.y0) > 16 ? a.bbox.y0 - b.bbox.y0 : a.bbox.x0 - b.bbox.x0
+      );
+
     for (const reg of regions) {
       const regSegBin = maskBinaryOutsideBox(closedForSeg, w, h, reg);
       const regLineBoxes = segmentLines(regSegBin, w, h, { skipFilter: true });
@@ -1272,13 +1240,13 @@ export async function processImageWithLocalOcr(params: {
             hw.text &&
             (hwPlaus > prPlaus + 0.02 || prErratic || pr.qualityScore < 0.72 || !pr.text)
           ) {
-            mergedLines.push(...hw.lines);
+            mergedLines.push(...sortRegionLines(hw.lines));
             usedHandwriting = true;
             continue;
           }
         }
         if (pr.text) {
-          mergedLines.push(...pr.lines);
+          mergedLines.push(...sortRegionLines(pr.lines));
           usedPrinted = true;
         }
       } else {
@@ -1290,15 +1258,62 @@ export async function processImageWithLocalOcr(params: {
           const prPlaus = scoreTextPlausibility(pr.text, pr.qualityScore, pr.lines);
           const prErratic = hasErraticTesseractArtifacts(pr.text, pr.lines);
           if (pr.text && !prErratic && (prPlaus >= hwPlaus + 0.12 || !hw.text)) {
-            mergedLines.push(...pr.lines);
+            mergedLines.push(...sortRegionLines(pr.lines));
             usedPrinted = true;
             continue;
           }
         }
         if (hw.text) {
-          mergedLines.push(...hw.lines);
+          mergedLines.push(...sortRegionLines(hw.lines));
           usedHandwriting = true;
         }
+      }
+    }
+
+    if (!hasSideBySideColumns) {
+      mergedLines.sort((a, b) =>
+        Math.abs(a.bbox.y0 - b.bbox.y0) > 16 ? a.bbox.y0 - b.bbox.y0 : a.bbox.x0 - b.bbox.x0
+      );
+    }
+
+    const avgConf =
+      mergedLines.length > 0
+        ? mergedLines.reduce((acc, l) => acc + l.confidence, 0) / mergedLines.length
+        : 0;
+
+    const fullPageLineBoxes = getOrderedLineBoxesForRegions(regions);
+    if (
+      mergedLines.length < fullPageLineBoxes.length &&
+      (usedHandwriting || detection.isHandwriting || !usedPrinted)
+    ) {
+      const hwFull = await runOfflineHandwritingOnLines(fullPageLineBoxes, true);
+      const mergedText = mergedLines.map((l) => l.text).join('\n');
+      const mergedPlaus = scoreTextPlausibility(mergedText, avgConf, mergedLines);
+      const hwFullPlaus = scoreTextPlausibility(hwFull.text, hwFull.qualityScore, hwFull.lines);
+      if (hwFull.lines.length > mergedLines.length && hwFullPlaus >= mergedPlaus - 0.04) {
+        appliedSteps.push('auto-multiregion-fullpage-align');
+        return writeReportAndReturn(
+          {
+            text: hwFull.text,
+            lines: hwFull.lines,
+            profile: ocrProfile,
+            detectedStyle: 'handwriting',
+            detection,
+            recognizer: 'trocr-host',
+            qualityScore: hwFull.qualityScore,
+            skewAngle,
+            darkInverted,
+            perspectiveWarped,
+            bordersCropped,
+            dpiScale,
+            appliedSteps,
+            regionsCount: regions.length,
+            processedPreview,
+            droppedHallucinations: hwFull.droppedHallucinations,
+            exportDir: runExportDir,
+          },
+          `Engine: trocr-host (Multi-Region Full-Page Align)`
+        );
       }
     }
 
@@ -1320,11 +1335,6 @@ export async function processImageWithLocalOcr(params: {
     if (finalStyle === 'mixed') {
       appliedSteps.push('auto-mixed-printed-handwriting');
     }
-
-    const avgConf =
-      mergedLines.length > 0
-        ? mergedLines.reduce((acc, l) => acc + l.confidence, 0) / mergedLines.length
-        : 0;
 
     return writeReportAndReturn(
       {
@@ -1358,7 +1368,7 @@ export async function processImageWithLocalOcr(params: {
 
     if (anyHandwritingReady) {
       const lineBoxes = getOrderedLineBoxesForRegions(regions).filter(
-        (b) => b.y1 - b.y0 + 1 >= 12
+        (b) => b.y1 - b.y0 + 1 >= 8
       );
 
       // Bidirectional cross-check: e.g. neat disconnected print handwriting that scored low in detectHandwriting

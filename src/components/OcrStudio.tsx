@@ -13,6 +13,7 @@ import {
   Clock,
   Crop,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { CameraCapture } from './CameraCapture';
 import { InteractiveQuadCropper } from './InteractiveQuadCropper';
@@ -40,6 +41,7 @@ interface ScanExtractionMeta {
   linesCount: number;
   detectedStyle: DetectedStyle;
   engineLabel: string;
+  recognizer?: string;
   appliedSteps?: string[];
   skewAngle?: number;
   regionsCount?: number;
@@ -501,11 +503,19 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             setProcessedImage(data.processedPreview);
           }
 
+          const isBrowserFallback =
+            data.engineOrigin === 'browser' ||
+            (Array.isArray(data.appliedSteps) && data.appliedSteps.includes('browser-grayscale'));
+
           const recognizerEngineLabel =
             data.recognizer === 'trocr-host'
-              ? `Offline · ${handwritingModelTier || 'TrOCR'} Handwriting`
+              ? isBrowserFallback
+                ? 'Offline · Browser TrOCR'
+                : `Offline · ${handwritingModelTier || 'TrOCR'} Handwriting`
               : data.recognizer === 'tesseract-host'
-                ? `Offline · ${printedModelTier || 'Tesseract'} Printed`
+                ? isBrowserFallback
+                  ? 'Offline · Browser Tesseract'
+                  : `Offline · ${printedModelTier || 'Tesseract'} Printed`
                 : data.recognizer === 'hybrid-host'
                   ? 'Offline · Hybrid (TrOCR + Tesseract)'
                   : 'Offline · Model Pending';
@@ -537,6 +547,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             linesCount: linesArr.length || (extractedText ? extractedText.split('\n').length : 0),
             detectedStyle: style,
             engineLabel: recognizerEngineLabel,
+            recognizer: typeof data.recognizer === 'string' ? data.recognizer : undefined,
             appliedSteps: Array.isArray(data.appliedSteps) ? data.appliedSteps : undefined,
             skewAngle: typeof data.skewAngle === 'number' ? data.skewAngle : undefined,
             regionsCount: typeof data.regionsCount === 'number' ? data.regionsCount : undefined,
@@ -1101,7 +1112,24 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                       <ArrowLeft className="w-3.5 h-3.5" />
                       <span>Edit raw OCR text</span>
                     </button>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {sourceImage &&
+                        !isScanning &&
+                        scanMeta &&
+                        (scanMeta.detectedStyle === 'printed' ||
+                          scanMeta.recognizer === 'tesseract-host' ||
+                          scanMeta.engineLabel.includes('Tesseract')) && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runExtractionPipeline(sourceImage, { profileOverride: 'handwriting' })
+                            }
+                            className="min-h-[32px] px-2.5 rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 text-[11px] font-medium inline-flex items-center gap-1 hover:bg-amber-100 dark:hover:bg-amber-950/70"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Re-scan as Handwriting (TrOCR)</span>
+                          </button>
+                        )}
                       <button
                         type="button"
                         disabled={isEnhancingAi}

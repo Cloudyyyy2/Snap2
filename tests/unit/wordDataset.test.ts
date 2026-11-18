@@ -88,5 +88,50 @@ describe('built-in English and reminder vocabulary dataset & fuzzy spell correct
     expect(correctWordWithLexicon('tormw').corrected).toBe('tomorrow');
     expect(correctWordWithLexicon('Virwlli').corrected).toBe('Broccoli');
     expect(correctWordWithLexicon('chulat').corrected).toBe('chocolat');
+    expect(correctWordWithLexicon('twhy').corrected).toBe('turkey');
+  });
+
+  it('repairs conservative grocery phrases while preserving proper nouns and abbreviations', () => {
+    expect(correctTextWithLexicon('as PEAS\nPan an chocolat').correctedText).toBe(
+      'asparagus\nPain au chocolat'
+    );
+    expect(correctTextWithLexicon('call Dr. Alice at 3pm').correctedText).toBe(
+      'call Dr. Alice at 3pm'
+    );
+  });
+
+  it('never over-corrects valid common short English words', () => {
+    const validCommonWords = [
+      'tray',
+      'buns',
+      'pesto',
+      'met',
+      'busy',
+      'army',
+      'lady',
+      'jury',
+      'holy',
+      'wary',
+      'wavy',
+      'bony',
+      'edgy',
+      'troy',
+      'ably',
+      'oily',
+      'lazy',
+      'bury',
+    ];
+    for (const word of validCommonWords) {
+      const res = correctWordWithLexicon(word);
+      expect(res.wasCorrected).toBe(false);
+      expect(res.corrected).toBe(word);
+    }
+
+    expect(correctTextWithLexicon('they this that then tray tiny').correctedText).toBe(
+      'they this that then tray tiny'
+    );
+    expect(
+      correctTextWithLexicon('Dr. Smith met Alice Bramwell at 3pm on 5/12 for $12.50').correctedText
+    ).toBe('Dr. Smith met Alice Bramwell at 3pm on 5/12 for $12.50');
   });
 });

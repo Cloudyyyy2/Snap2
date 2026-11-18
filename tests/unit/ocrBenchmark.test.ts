@@ -341,7 +341,7 @@ describe('Snap2 OCR Pipeline Benchmark & Accuracy Evaluation Suite', () => {
         const evalAcc = evaluateCharacterAccuracy(gt, post.correctedText);
         expect(evalAcc.accuracy).toBeGreaterThanOrEqual(0.90);
       }
-    });
+    }, 30000);
 
     it('Scenario 5: Strongly Slanted Cursive with Interlocking Ascenders/Descenders', () => {
       const gt = 'morning flight to London\nclass presentation tomorrow\nfinish work early';

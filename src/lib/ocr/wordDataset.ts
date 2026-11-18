@@ -2,6 +2,7 @@
  * Built-in English and reminder vocabulary dataset with OCR handwriting confusion
  * repair and fast Damerau-Levenshtein distance correction to deliver 90%+ recognition accuracy.
  */
+import { repairConservativePhrases } from './postprocess';
 
 // Core high-frequency English vocabulary + common reminder, task, scheduling, and note words
 export const ENGLISH_REMINDER_WORDS: readonly string[] = [
@@ -233,6 +234,7 @@ function buildLigatureVariants(lower: string): string[] {
       all.add(s.replace(/w/g, 'co'));
       all.add(s.replace(/w/g, 'oc'));
       all.add(s.replace(/w/g, 'oo'));
+      all.add(s.replace(/w/g, 'ur'));
     }
   }
   return Array.from(all);
@@ -379,9 +381,20 @@ export function correctWordWithLexicon(
   const startsMatch =
     bestCandidate !== null &&
     (bestCandidate[0] === lower[0] || variants.some((v) => v[0] === bestCandidate![0]));
+  const endsMatch =
+    bestCandidate !== null &&
+    bestCandidate[bestCandidate.length - 1] === lower[lower.length - 1];
+  const compressedCursiveOk =
+    !isCapitalized &&
+    lower.length >= 4 &&
+    minPlainDist <= 2 &&
+    minWeighted <= 1.35 &&
+    startsMatch &&
+    endsMatch;
+
   if (
     bestCandidate &&
-    minPlainDist <= maxDist &&
+    (minPlainDist <= maxDist || compressedCursiveOk) &&
     (!isCapitalized || (minWeighted <= 1.8 && (startsMatch || minPlainDist <= 1)))
   ) {
     const restored = matchCasePattern(core, bestCandidate);
@@ -442,7 +455,16 @@ export function correctTextWithLexicon(rawText: string): TextCorrectionSummary {
   let verifiedCount = 0;
 
   const correctedLines = lines.map((line) => {
-    const tokens = line.split(/(\s+)/);
+    const repairedLine = repairConservativePhrases(line);
+    if (repairedLine !== line) {
+      allCorrections.push({
+        original: line,
+        corrected: repairedLine,
+        wasCorrected: true,
+        confidence: 0.92,
+      });
+    }
+    const tokens = repairedLine.split(/(\s+)/);
     const correctedTokens = tokens.map((token) => {
       if (/^\s*$/.test(token)) return token; // preserve whitespace
       totalWordCount++;
@@ -457,7 +479,17 @@ export function correctTextWithLexicon(rawText: string): TextCorrectionSummary {
       }
       return token;
     });
-    return correctedTokens.join('');
+    const joined = correctedTokens.join('');
+    const postPhrase = repairConservativePhrases(joined);
+    if (postPhrase !== joined) {
+      allCorrections.push({
+        original: joined,
+        corrected: postPhrase,
+        wasCorrected: true,
+        confidence: 0.92,
+      });
+    }
+    return postPhrase;
   });
 
   const accuracyScore =

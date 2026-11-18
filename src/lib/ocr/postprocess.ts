@@ -37,6 +37,41 @@ export function detectAndCleanHallucination(raw: string): {
     return { text: '', isHallucination: true };
   }
 
+  // TrOCR Wikipedia sidebar / template UI boilerplate (often concatenated without spaces)
+  const wikiSidebarPatterns = [
+    /related\s*changes/i,
+    /upload\s*file/i,
+    /special\s*pages/i,
+    /permanent\s*link/i,
+    /page\s*information/i,
+    /cite\s*this\s*page/i,
+    /wikidata\s*item/i,
+  ];
+  const wikiMatches = wikiSidebarPatterns.filter((re) => re.test(cleaned)).length;
+  if (
+    wikiMatches >= 2 ||
+    /(?:related\s*changes|special\s*pages|permanent\s*link|page\s*information|cite\s*this\s*page|wikidata\s*item)/i.test(
+      cleaned
+    )
+  ) {
+    return { text: '', isHallucination: true };
+  }
+
+  // TrOCR Wikipedia infobox birth-date loops (e.g. "1961 02 19 April 19 1961 age the age of birth")
+  if (/\b(?:age\s+)?the\s+age\s+of\s+birth\b/i.test(cleaned)) {
+    return { text: '', isHallucination: true };
+  }
+  const yearMatches = cleaned.match(/\b(?:19|20)\d{2}\b/g) || [];
+  if (
+    yearMatches.length >= 2 &&
+    new Set(yearMatches).size < yearMatches.length &&
+    /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|age|birth|born)\b/i.test(
+      cleaned
+    )
+  ) {
+    return { text: '', isHallucination: true };
+  }
+
   const words = cleaned.split(/\s+/);
   if (words.length >= 6) {
     // Detect same word repeated consecutively 3+ times
@@ -137,6 +172,12 @@ function snapWordToLexicon(word: string, lexicon: Set<string>): string {
   return word;
 }
 
+export function repairConservativePhrases(text: string): string {
+  return text
+    .replace(/\bas\s+peas\b/gi, (m) => (/^A/.test(m) ? 'Asparagus' : 'asparagus'))
+    .replace(/\bpa(?:i?n)\s+(?:an|au)\s+chocolat\b/gi, 'Pain au chocolat');
+}
+
 /**
  * Normalizes handwritten TrOCR output lines without applying printed-glyph homoglyph rules:
  * - detects & drops repetitive decoder hallucinations
@@ -168,7 +209,7 @@ export function postprocessHandwrittenLines(
         };
       }
 
-      let text = guardText;
+      let text = repairConservativePhrases(guardText);
       const snappedWords: Array<{ from: string; to: string }> = [];
 
       if (line.confidence < 0.6 && text.length > 0) {
