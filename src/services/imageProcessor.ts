@@ -51,10 +51,11 @@ export function preprocessForOCR(source: HTMLCanvasElement | ImageData | any): I
 
   const result = preprocessImageData({ data: rgbaData, width, height }, preOpts);
 
-  // Construct output ImageData with clean binary ink (0) on white paper (255)
+  // Construct output ImageData with continuous anti-aliased grayscale strokes (0..255)
   const enhancedData = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < result.binary.length; i++) {
-    const val = result.binary[i] === 0 ? 0 : 255;
+  const grayBuffer = result.enhancedGray || result.gray;
+  for (let i = 0; i < grayBuffer.length; i++) {
+    const val = grayBuffer[i];
     const idx = i * 4;
     enhancedData[idx] = val;
     enhancedData[idx + 1] = val;

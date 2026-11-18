@@ -25,6 +25,7 @@ import {
 import {
   correctDocumentPerspective,
   deskewGrayscale,
+  deslantGrayscale,
 } from '../src/lib/ocr/geometry';
 import { segmentLayoutRegions } from '../src/lib/ocr/handwriting/layout';
 import {
@@ -237,7 +238,9 @@ export async function recognizeLines(
   for (const crop of lineCrops) {
     const rawImg = grayscaleToRgbRawImage(crop.data, crop.width, crop.height);
     const out = await rec(rawImg, {
-      max_new_tokens: 48,
+      num_beams: 4,
+      max_new_tokens: 64,
+      early_stopping: true,
       no_repeat_ngram_size: 3,
       repetition_penalty: 1.2,
     });
@@ -479,9 +482,6 @@ export async function processImageWithLocalOcr(params: {
   let binary = binarizeSauvola(noRules, w, h, sp.radius, sp.k);
   let cleanBinary = w >= 280 && h >= 200 ? filterTextComponents(binary, w, h) : binary;
 
-  const workGrayW = w;
-  const workGrayH = h;
-
   // Stage 2c: Smart DPI Resolution Scaling for small UI fonts / receipts (~300+ DPI target)
   const dpiScale = computeRecommendedDpiScale(cleanBinary, w, h);
   if (dpiScale >= 1.5 && Math.round(w * dpiScale) <= 2400 && Math.round(h * dpiScale) <= 2400) {
@@ -495,6 +495,15 @@ export async function processImageWithLocalOcr(params: {
       .raw()
       .toBuffer({ resolveWithObject: true });
 
+    const upscaledWork = await sharp(Buffer.from(workGray), {
+      raw: { width: w, height: h, channels: 1 },
+    })
+      .resize(targetW, targetH, { kernel: sharp.kernel.lanczos3 })
+      .grayscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    workGray = new Uint8ClampedArray(upscaledWork.data.subarray(0, upscaledWork.info.width * upscaledWork.info.height));
     noRules = new Uint8ClampedArray(upscaled.data.subarray(0, upscaled.info.width * upscaled.info.height));
     w = upscaled.info.width;
     h = upscaled.info.height;
@@ -600,8 +609,8 @@ export async function processImageWithLocalOcr(params: {
     await saveGrayscalePng(
       path.join(runExportDir, '03b_background_flattened.png'),
       workGray,
-      workGrayW,
-      workGrayH
+      w,
+      h
     );
     await saveGrayscalePng(path.join(runExportDir, '03c_ruled_lines_removed.png'), noRules, w, h);
     await saveGrayscalePng(path.join(runExportDir, '04_contrast_enhanced.png'), contrastGray, w, h);
@@ -746,13 +755,27 @@ export async function processImageWithLocalOcr(params: {
 
     const chunkPlans = targetLineBoxes.map((box) => ({
       lineBox: box,
-      chunks: splitWideLineBox(closedForSeg, w, h, box, 5.0),
+      chunks: splitWideLineBox(closedForSeg, w, h, box, 6.5),
     }));
 
     const flatChunks: CroppedLine[] = [];
     for (const plan of chunkPlans) {
       for (const chunkBox of plan.chunks) {
-        flatChunks.push(cropLine(contrastGray, w, h, chunkBox, 16));
+        const cropped = cropLine(contrastGray, w, h, chunkBox, 16);
+        if (initialStyle === 'handwriting') {
+          const chunkBin = cropLine(closedForSeg, w, h, chunkBox, 16).data;
+          const deslanted = deslantGrayscale(cropped.data, chunkBin, cropped.width, cropped.height);
+          if (deslanted.deslanted) {
+            flatChunks.push({
+              data: deslanted.data,
+              width: deslanted.width,
+              height: deslanted.height,
+              box: chunkBox,
+            });
+            continue;
+          }
+        }
+        flatChunks.push(cropped);
       }
     }
 

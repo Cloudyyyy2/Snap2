@@ -223,13 +223,21 @@ export function segmentLines(
       }
     }
 
-    const boxH = maxY - minY + 1;
+    const linePitch =
+      peaks.length > 1
+        ? (peaks[peaks.length - 1] - peaks[0]) / (peaks.length - 1)
+        : Math.max(30, range.y1 - range.y0 + 1);
+    const margin = Math.max(12, Math.round(linePitch * 0.32));
+    const safeY0 = Math.max(0, minY - margin);
+    const safeY1 = Math.min(h - 1, maxY + margin);
+
+    const boxH = safeY1 - safeY0 + 1;
     const boxW = maxX - minX + 1;
     const minBoxW = w >= 280 ? 24 : 8;
     const minBoxH = h >= 200 ? 12 : 6;
     const minInk = w >= 280 ? 40 : 12;
     if (maxX >= minX && boxH >= minBoxH && boxW >= minBoxW && inkPixels >= minInk) {
-      boxes.push({ x0: minX, y0: minY, x1: maxX, y1: maxY });
+      boxes.push({ x0: minX, y0: safeY0, x1: maxX, y1: safeY1 });
     }
   }
 
@@ -238,14 +246,14 @@ export function segmentLines(
 
 /**
  * Splits overly wide line boxes (aspect > maxAspect) at deep inter-word whitespace gaps
- * so downstream fixed-square vision encoders (like TrOCR's 384x384 input) do not squash characters.
+ * or minimum-ink ligatures so downstream fixed-square vision encoders (like TrOCR's 384x384 input) do not squash characters.
  */
 export function splitWideLineBox(
   binary: Uint8ClampedArray,
   w: number,
   h: number,
   box: LineBox,
-  maxAspect = 5.0
+  maxAspect = 6.5
 ): LineBox[] {
   const boxW = box.x1 - box.x0 + 1;
   const boxH = Math.max(1, box.y1 - box.y0 + 1);
@@ -299,8 +307,53 @@ export function splitWideLineBox(
         gapStart = -1;
       }
     }
+    if (gapStart !== -1) {
+      const gw = searchEnd - gapStart + 1;
+      if (gw >= minSplitGap && gw >= bestGapWidth) {
+        bestGapWidth = gw;
+        bestGapCenter = Math.floor((gapStart + searchEnd) / 2);
+      }
+    }
 
-    const splitAt = bestGapCenter !== -1 ? bestGapCenter : searchEnd;
+    // Extended lookahead up to 1.25 * maxChunkW if no whitespace gap found
+    if (bestGapCenter === -1) {
+      const lookaheadEnd = Math.min(boxW - 1, cursor + Math.round(maxChunkW * 1.25));
+      gapStart = -1;
+      for (let lx = searchEnd; lx <= lookaheadEnd; lx++) {
+        if (colInk[lx] <= 1) {
+          if (gapStart === -1) gapStart = lx;
+        } else if (gapStart !== -1) {
+          const gw = lx - gapStart;
+          if (gw >= minSplitGap && gw >= bestGapWidth) {
+            bestGapWidth = gw;
+            bestGapCenter = Math.floor((gapStart + lx - 1) / 2);
+          }
+          gapStart = -1;
+        }
+      }
+      if (gapStart !== -1) {
+        const gw = lookaheadEnd - gapStart + 1;
+        if (gw >= minSplitGap && gw >= bestGapWidth) {
+          bestGapWidth = gw;
+          bestGapCenter = Math.floor((gapStart + lookaheadEnd) / 2);
+        }
+      }
+    }
+
+    // Minimum-ink ligature split fallback if continuous cursive prevents clean gap
+    let splitAt = bestGapCenter;
+    if (splitAt === -1) {
+      let minInk = Infinity;
+      let minInkCol = searchEnd;
+      for (let lx = searchStart; lx <= searchEnd; lx++) {
+        if (colInk[lx] < minInk) {
+          minInk = colInk[lx];
+          minInkCol = lx;
+        }
+      }
+      splitAt = minInkCol;
+    }
+
     chunks.push({
       x0: box.x0 + cursor,
       y0: box.y0,

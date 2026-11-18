@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   damerauLevenshteinDistance,
+  weightedCursiveDistance,
   correctWordWithLexicon,
   correctTextWithLexicon,
   ENGLISH_REMINDER_WORDS,
   LEXICON_SET,
+  OCR_CONFUSION_RULES,
 } from '../../src/lib/ocr/wordDataset';
 
 describe('built-in English and reminder vocabulary dataset & fuzzy spell corrector', () => {
@@ -72,5 +74,60 @@ describe('built-in English and reminder vocabulary dataset & fuzzy spell correct
     expect(result.corrections.length).toBeGreaterThanOrEqual(2);
     expect(result.accuracyScore).toBeGreaterThanOrEqual(90);
     expect(result.wordsVerified).toBeGreaterThanOrEqual(result.totalWords - 1);
+  });
+
+  it('correctWordWithLexicon repairs bidirectional cursive confusions (rn<->m, cl<->d, vv<->w, ri<->n)', () => {
+    // rn -> m
+    expect(correctWordWithLexicon('rnilk').corrected.toLowerCase()).toBe('milk');
+    // m -> rn
+    expect(correctWordWithLexicon('moming').corrected.toLowerCase()).toBe('morning');
+    // cl -> d
+    expect(correctWordWithLexicon('clate').corrected.toLowerCase()).toBe('date');
+    // d -> cl
+    expect(correctWordWithLexicon('dass').corrected.toLowerCase()).toBe('class');
+    // vv -> w
+    expect(correctWordWithLexicon('vvork').corrected.toLowerCase()).toBe('work');
+    // ri -> n
+    expect(correctWordWithLexicon('trairi').corrected.toLowerCase()).toBe('train');
+    // n -> ri
+    expect(correctWordWithLexicon('fniend').corrected.toLowerCase()).toBe('friend');
+    expect(correctWordWithLexicon('pnint').corrected.toLowerCase()).toBe('print');
+  });
+
+  it('weightedCursiveDistance assigns reduced penalty (0.35) for cursive ambiguities', () => {
+    expect(weightedCursiveDistance('rnilk', 'milk')).toBe(0.35);
+    expect(weightedCursiveDistance('moming', 'morning')).toBe(0.35);
+    expect(weightedCursiveDistance('clate', 'date')).toBe(0.35);
+    expect(weightedCursiveDistance('dass', 'class')).toBe(0.35);
+    expect(weightedCursiveDistance('vvork', 'work')).toBe(0.35);
+    expect(weightedCursiveDistance('trairi', 'train')).toBe(0.35);
+    expect(weightedCursiveDistance('fniend', 'friend')).toBe(0.35);
+    // Arbitrary substitution costs full 1.0
+    expect(weightedCursiveDistance('balk', 'milk')).toBe(2.0);
+  });
+
+  it('preserves capitalized proper nouns, exact letter casing, and punctuation', () => {
+    // Capitalized proper nouns (including cursive pairs like 'd' in Dean which must not become 'Clean')
+    expect(correctWordWithLexicon('Bramwell').corrected).toBe('Bramwell');
+    expect(correctWordWithLexicon('Alice').corrected).toBe('Alice');
+    expect(correctWordWithLexicon('Dean').corrected).toBe('Dean');
+
+    // Non-mutation of valid core English and document words
+    expect(correctWordWithLexicon('meter').corrected).toBe('meter');
+    expect(correctWordWithLexicon('fresh').corrected).toBe('fresh');
+    expect(correctWordWithLexicon('house').corrected).toBe('house');
+    expect(correctWordWithLexicon('world').corrected).toBe('world');
+    expect(correctWordWithLexicon('hello').corrected).toBe('hello');
+
+    // Case preservation
+    expect(correctWordWithLexicon('RNILK').corrected).toBe('MILK');
+    expect(correctWordWithLexicon('Rnilk', { protectProperNouns: false }).corrected).toBe('Milk');
+    expect(correctWordWithLexicon('rnilk').corrected).toBe('milk');
+
+    // Punctuation preservation and phrase integrity
+    expect(correctWordWithLexicon('rnilk,').corrected).toBe('milk,');
+    expect(correctWordWithLexicon('"clate"').corrected).toBe('"date"');
+    expect(correctWordWithLexicon('fniend!').corrected).toBe('friend!');
+    expect(correctTextWithLexicon('hello, world!').correctedText).toBe('hello, world!');
   });
 });

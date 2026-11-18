@@ -4,7 +4,7 @@ import {
   removeRuledLines,
   binarizeSauvola,
 } from '../../src/lib/ocr/handwriting/cleanup';
-import { segmentLines } from '../../src/lib/ocr/handwriting/lines';
+import { segmentLines, splitWideLineBox } from '../../src/lib/ocr/handwriting/lines';
 import { detectHandwriting } from '../../src/lib/ocr/handwriting/detect';
 import { postprocessHandwrittenLines } from '../../src/lib/ocr/postprocess';
 
@@ -425,6 +425,71 @@ describe('handwriting image cleanup & segmentation', () => {
     const midIdx = 64 * 128 + 64;
     expect(croppedSq.data[midIdx]).toBe(0);
     expect(croppedSq.data[0]).toBe(255);
+  });
+
+  it('segmentLines preserves ascenders and descenders with generous margins and splitWideLineBox avoids mid-ligature slicing', () => {
+    const w = 320;
+    const h = 200;
+    const bin = new Uint8ClampedArray(w * h).fill(255);
+
+    // Line 1: baseline at y = 50, x-height at y = 35..50
+    // descenders (g, p, y) hanging down to y = 72
+    for (let x = 40; x < 280; x++) {
+      if (x % 20 < 14) {
+        for (let y = 38; y <= 50; y++) bin[y * w + x] = 0;
+      }
+    }
+    // Descender loops for line 1
+    for (const descX of [70, 130, 190, 250]) {
+      for (let y = 50; y <= 72; y++) {
+        bin[y * w + descX] = 0;
+      }
+    }
+
+    // Line 2: baseline at y = 140, x-height at y = 125..140
+    // ascenders (f, l, h) rising up to y = 100
+    for (let x = 40; x < 280; x++) {
+      if (x % 20 < 14) {
+        for (let y = 128; y <= 140; y++) bin[y * w + x] = 0;
+      }
+    }
+    // Ascender stems for line 2
+    for (const ascX of [60, 120, 180, 240]) {
+      for (let y = 100; y <= 128; y++) {
+        bin[y * w + ascX] = 0;
+      }
+    }
+
+    const boxes = segmentLines(bin, w, h);
+    expect(boxes.length).toBe(2);
+
+    // Line 1 box must capture the descenders (down to y=72)
+    expect(boxes[0].y1).toBeGreaterThanOrEqual(72);
+
+    // Line 2 box must capture the ascenders (up to y=100)
+    expect(boxes[1].y0).toBeLessThanOrEqual(100);
+
+    // Test continuous cursive wide word without internal whitespace gaps
+    const wideW = 600;
+    const wideH = 50;
+    const continuousWord = new Uint8ClampedArray(wideW * wideH).fill(255);
+    // Continuous baseline ligature across the entire 500px span
+    for (let x = 50; x < 550; x++) {
+      continuousWord[35 * wideW + x] = 0; // baseline ligature
+      // Letters with varying heights
+      if (x % 25 < 18) {
+        for (let y = 20; y <= 35; y++) continuousWord[y * wideW + x] = 0;
+      }
+    }
+
+    const continuousChunks = splitWideLineBox(
+      continuousWord,
+      wideW,
+      wideH,
+      { x0: 50, y0: 15, x1: 550, y1: 45 },
+      6.5
+    );
+    expect(continuousChunks.length).toBeGreaterThanOrEqual(1);
   });
 });
 

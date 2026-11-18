@@ -10,6 +10,9 @@ import {
   estimateSkewAngle,
   rotateGrayscale,
   deskewGrayscale,
+  estimateCursiveSlantAngle,
+  shearGrayscale,
+  deslantGrayscale,
   type QuadCorners,
 } from '../../src/lib/ocr/geometry';
 
@@ -288,5 +291,77 @@ describe('geometric & spatial correction (deskewing & perspective dewarping)', (
       expect(Number.isNaN(warped.data[i + 2])).toBe(false);
       expect(warped.data[i + 3]).toBe(255);
     }
+  });
+
+  it('estimateCursiveSlantAngle, shearGrayscale, and deslantGrayscale normalize slanted cursive strokes without clipping', () => {
+    const w = 240;
+    const h = 70;
+
+    function renderSlantedStems(angleDeg: number): Uint8ClampedArray {
+      const buf = new Uint8ClampedArray(w * h).fill(255);
+      const rad = (angleDeg * Math.PI) / 180;
+      const tan = Math.tan(rad);
+      const stemX = [40, 65, 90, 115, 140, 165, 190];
+
+      for (const sx of stemX) {
+        for (let y = 12; y <= 58; y++) {
+          const xCenter = sx + tan * (h - 1 - y);
+          for (let dx = -1; dx <= 1; dx++) {
+            const px = Math.round(xCenter + dx);
+            if (px >= 0 && px < w) {
+              buf[y * w + px] = 0;
+            }
+          }
+        }
+      }
+      return buf;
+    }
+
+    function projectionVariance(buf: Uint8ClampedArray, width: number, height: number): number {
+      const colSum = new Float64Array(width);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (buf[y * width + x] < 128) colSum[x]++;
+        }
+      }
+      const mean = colSum.reduce((a, b) => a + b, 0) / width;
+      return colSum.reduce((a, b) => a + (b - mean) ** 2, 0) / width;
+    }
+
+    // 1. Forward slant (+22°)
+    const slanted22 = renderSlantedStems(22);
+    const estimated22 = estimateCursiveSlantAngle(slanted22, w, h);
+    expect(Math.abs(estimated22 - 22)).toBeLessThanOrEqual(1.5);
+
+    const deslanted22 = deslantGrayscale(slanted22, slanted22, w, h);
+    expect(deslanted22.deslanted).toBe(true);
+    expect(deslanted22.width).toBeGreaterThanOrEqual(w);
+    expect(deslanted22.height).toBe(h);
+
+    const varOrig = projectionVariance(slanted22, w, h);
+    const varDeslanted = projectionVariance(deslanted22.data, deslanted22.width, deslanted22.height);
+    expect(varDeslanted).toBeGreaterThan(varOrig * 1.35);
+
+    // Verify no stroke pixels are clipped: total ink should be conserved
+    let inkOrig = 0;
+    for (let i = 0; i < slanted22.length; i++) if (slanted22[i] === 0) inkOrig++;
+    let inkDeslanted = 0;
+    for (let i = 0; i < deslanted22.data.length; i++) if (deslanted22.data[i] < 128) inkDeslanted++;
+    expect(Math.abs(inkDeslanted - inkOrig) / inkOrig).toBeLessThan(0.05);
+
+    // 2. Upright text (0° slant) should not be unnecessarily sheared
+    const upright = renderSlantedStems(0);
+    const estimated0 = estimateCursiveSlantAngle(upright, w, h);
+    expect(Math.abs(estimated0)).toBeLessThan(2.5);
+    const deslanted0 = deslantGrayscale(upright, upright, w, h);
+    expect(deslanted0.deslanted).toBe(false);
+    expect(deslanted0.angleDeg).toBe(0);
+
+    // 3. Backward slant (-18°)
+    const slantedNeg = renderSlantedStems(-18);
+    const estimatedNeg = estimateCursiveSlantAngle(slantedNeg, w, h);
+    expect(Math.abs(estimatedNeg - -18)).toBeLessThanOrEqual(1.5);
+    const deslantedNeg = deslantGrayscale(slantedNeg, slantedNeg, w, h);
+    expect(deslantedNeg.deslanted).toBe(true);
   });
 });

@@ -223,4 +223,41 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
     },
     45000
   );
+
+  it('saveGrayscalePng succeeds after auto-bbox-shrink without memory area too small error', async () => {
+    const svg = `
+      <svg width="460" height="160" xmlns="http://www.w3.org/2000/svg">
+        <rect width="460" height="160" fill="white" />
+        <line x1="0" y1="68" x2="460" y2="68" stroke="#c8d0dc" stroke-width="1.5" />
+        <line x1="0" y1="128" x2="460" y2="128" stroke="#c8d0dc" stroke-width="1.5" />
+        <text x="24" y="60" font-size="34" font-family="sans-serif" fill="#18181b">buy milk</text>
+        <text x="24" y="120" font-size="34" font-family="sans-serif" fill="#18181b">call dentist</text>
+      </svg>
+    `;
+    const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
+    const tempExportRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'snapremind-ocr-stage-test-'));
+
+    try {
+      const res = await processImageWithLocalOcr({
+        imageBuffer: pngBuffer,
+        ocrProfile: 'handwriting',
+        exportStages: true,
+        exportRootDir: tempExportRoot,
+      });
+
+      expect(res.appliedSteps.some((step) => step.startsWith('auto-bbox-shrink'))).toBe(true);
+      expect(res.exportDir).toBeDefined();
+      const dir = res.exportDir!;
+      expect(fs.existsSync(path.join(dir, '03b_background_flattened.png'))).toBe(true);
+      expect(fs.existsSync(path.join(dir, '03c_ruled_lines_removed.png'))).toBe(true);
+      expect(fs.existsSync(path.join(dir, '04_contrast_enhanced.png'))).toBe(true);
+      expect(fs.existsSync(path.join(dir, '05_adaptive_binary.png'))).toBe(true);
+
+      const flattenedMetadata = await sharp(path.join(dir, '03b_background_flattened.png')).metadata();
+      expect(flattenedMetadata.width).toBeGreaterThan(0);
+      expect(flattenedMetadata.height).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(tempExportRoot, { recursive: true, force: true });
+    }
+  });
 });
