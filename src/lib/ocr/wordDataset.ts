@@ -203,11 +203,18 @@ function weightedHandwritingDistance(observed: string, target: string): number {
   return d[al][bl];
 }
 
+export function weightedCursiveDistance(observed: string, target: string): number {
+  return weightedHandwritingDistance(observed, target);
+}
+
 function buildLigatureVariants(lower: string): string[] {
   const step1 = new Set<string>([lower]);
   if (lower.includes('n')) {
     step1.add(lower.replace(/n([aeiou])/g, 'ri$1'));
     step1.add(lower.replace(/ndn/g, 'ndri'));
+  }
+  if (lower.includes('d')) {
+    step1.add(lower.replace(/d/g, 'cl'));
   }
   if (/^vi/.test(lower)) {
     step1.add(lower.replace(/^vi/, 'b'));
@@ -310,6 +317,12 @@ export function correctWordWithLexicon(
     }
   }
 
+  // Protect short capitalized tokens/abbreviations (e.g. "Dr.", "Dean") from fuzzy dictionary snapping
+  const isCapitalized = /^[A-Z]/.test(core);
+  if (isCapitalized && lower.length <= 4) {
+    return { original: rawWord, corrected: rawWord, wasCorrected: false, confidence: 0.9 };
+  }
+
   // 2. Confusion-weighted fuzzy Levenshtein candidate search across full lexicon & ligature variants
   const maxDist = options.maxDistance ?? (lower.length >= 7 ? 3 : lower.length >= 5 ? 3 : 1);
   let bestCandidate: string | null = null;
@@ -362,7 +375,15 @@ export function correctWordWithLexicon(
     }
   }
 
-  if (bestCandidate && minPlainDist <= maxDist) {
+  // Capitalized 5+ letter tokens (proper nouns like "Alice") are only snapped on high-confidence visual matches
+  const startsMatch =
+    bestCandidate !== null &&
+    (bestCandidate[0] === lower[0] || variants.some((v) => v[0] === bestCandidate![0]));
+  if (
+    bestCandidate &&
+    minPlainDist <= maxDist &&
+    (!isCapitalized || (minWeighted <= 1.8 && (startsMatch || minPlainDist <= 1)))
+  ) {
     const restored = matchCasePattern(core, bestCandidate);
     const confidence = minPlainDist === 1 ? 0.92 : minPlainDist === 2 ? 0.87 : 0.82;
     return {

@@ -163,7 +163,8 @@ export function segmentLines(
   const colInk = new Int32Array(w);
   const largeGap = Math.max(45, Math.round(w * 0.14));
 
-  for (const range of lineRanges) {
+  for (let rangeIdx = 0; rangeIdx < lineRanges.length; rangeIdx++) {
+    const range = lineRanges[rangeIdx];
     colInk.fill(0);
     let totalInk = 0;
 
@@ -238,8 +239,16 @@ export function segmentLines(
         ? (peaks[peaks.length - 1] - peaks[0]) / (peaks.length - 1)
         : Math.max(30, range.y1 - range.y0 + 1);
     const margin = Math.max(12, Math.round(linePitch * 0.32));
-    const safeY0 = Math.max(0, minY - margin);
-    const safeY1 = Math.min(h - 1, maxY + margin);
+    let safeY0 = Math.max(0, minY - margin);
+    let safeY1 = Math.min(h - 1, maxY + margin);
+
+    // Cap padding at the valley boundary between adjacent lines so tightly spaced lines never overlap
+    if (rangeIdx > 0) {
+      safeY0 = Math.max(range.y0 + 1, safeY0);
+    }
+    if (rangeIdx < lineRanges.length - 1) {
+      safeY1 = Math.min(range.y1 - 1, safeY1);
+    }
 
     const boxH = safeY1 - safeY0 + 1;
     const boxW = maxX - minX + 1;

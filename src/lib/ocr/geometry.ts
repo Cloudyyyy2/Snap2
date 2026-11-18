@@ -841,34 +841,25 @@ export interface DeslantResult {
   height: number;
   slantDeg: number;
   corrected: boolean;
+  angleDeg: number;
+  deslanted: boolean;
 }
 
 /**
- * Estimates cursive/handwritten slant angle (-25° to +25°) by maximizing vertical
- * column ink concentration under horizontal shear, then applies bilinear shear
- * deslanting so upright stems align vertically for TrOCR recognition.
+ * Estimates cursive/handwritten slant angle (-maxSlant to +maxSlant degrees)
+ * by maximizing vertical column ink projection energy under horizontal shear.
  */
-export function deslantGrayscale(
+export function estimateCursiveSlantAngle(
   gray: Uint8ClampedArray,
   w: number,
   h: number,
   options: DeslantOptions = {}
-): DeslantResult {
-  if (w < 8 || h < 8) {
-    return {
-      data: new Uint8ClampedArray(gray),
-      width: w,
-      height: h,
-      slantDeg: 0,
-      corrected: false,
-    };
-  }
+): number {
+  if (w < 8 || h < 8) return 0;
 
   const maxSlant = options.maxSlantDeg ?? 25;
   const stepDeg = options.stepDeg ?? 2.5;
-  const minCorrection = options.minCorrectionDeg ?? 3.0;
   const inkThreshold = options.inkThreshold ?? 175;
-  const fill = options.backgroundFill ?? 255;
 
   const inkX: number[] = [];
   const inkY: number[] = [];
@@ -884,15 +875,7 @@ export function deslantGrayscale(
     }
   }
 
-  if (inkX.length < 20) {
-    return {
-      data: new Uint8ClampedArray(gray),
-      width: w,
-      height: h,
-      slantDeg: 0,
-      corrected: false,
-    };
-  }
+  if (inkX.length < 20) return 0;
 
   const maxExtraW = Math.ceil(Math.tan((maxSlant * Math.PI) / 180) * h);
   const binW = w + maxExtraW * 2 + 4;
@@ -928,7 +911,6 @@ export function deslantGrayscale(
       }
     }
   } else {
-    // Coarse-to-fine sweep: step 8 deg coarse pass, then ±4 deg fine pass at 2 deg step
     let coarseBestDeg = 0;
     let coarseBestEnergy = zeroEnergy;
     const coarseLimit = Math.floor(maxSlant / 8) * 8;
@@ -945,7 +927,7 @@ export function deslantGrayscale(
     bestEnergy = coarseBestEnergy;
     const fineStart = Math.max(-maxSlant, coarseBestDeg - 4);
     const fineEnd = Math.min(maxSlant, coarseBestDeg + 4);
-    for (let deg = fineStart; deg <= fineEnd + 1e-6; deg += 2) {
+    for (let deg = fineStart; deg <= fineEnd + 1e-6; deg += 1) {
       if (deg === coarseBestDeg || deg === 0) continue;
       const energy = scoreSlant(deg);
       if (energy > bestEnergy) {
@@ -955,27 +937,32 @@ export function deslantGrayscale(
     }
   }
 
-  if (Math.abs(bestDeg) < minCorrection || bestEnergy <= zeroEnergy * 1.05) {
-    return {
-      data: new Uint8ClampedArray(gray),
-      width: w,
-      height: h,
-      slantDeg: 0,
-      corrected: false,
-    };
-  }
+  if (bestEnergy <= zeroEnergy * 1.05) return 0;
+  return Number(bestDeg.toFixed(1));
+}
 
-  const k = Math.tan((bestDeg * Math.PI) / 180);
+/**
+ * Applies horizontal bilinear shear transformation without clipping characters,
+ * dynamically expanding output width to accommodate the sheared strokes.
+ */
+export function shearGrayscale(
+  gray: Uint8ClampedArray,
+  w: number,
+  h: number,
+  angleDeg: number,
+  backgroundFill = 255
+): { data: Uint8ClampedArray; width: number; height: number } {
+  const cy = (h - 1) * 0.5;
+  const k = Math.tan((angleDeg * Math.PI) / 180);
   const padX = Math.ceil(Math.abs(k) * (h * 0.5)) + 2;
   const outW = w + padX * 2;
-  const out = new Uint8ClampedArray(outW * h).fill(fill);
+  const out = new Uint8ClampedArray(outW * h).fill(backgroundFill);
 
   for (let y = 0; y < h; y++) {
     const dy = y - cy;
     const dstOff = y * outW;
     const row0 = y * w;
     for (let dx = 0; dx < outW; dx++) {
-      // Inverse mapping: dstX = srcX + k * (y - cy) + padX  =>  srcX = dstX - padX - k * dy
       const sx = dx - padX - k * dy;
       const x0 = Math.floor(sx);
       if (x0 < 0 || x0 >= w - 1) continue;
@@ -986,12 +973,77 @@ export function deslantGrayscale(
     }
   }
 
+  return { data: out, width: outW, height: h };
+}
+
+/**
+ * Estimates cursive/handwritten slant angle (-25° to +25°) by maximizing vertical
+ * column ink concentration under horizontal shear, then applies bilinear shear
+ * deslanting so upright stems align vertically for TrOCR recognition.
+ */
+export function deslantGrayscale(
+  gray: Uint8ClampedArray,
+  w: number,
+  h: number,
+  options?: DeslantOptions
+): DeslantResult;
+export function deslantGrayscale(
+  gray: Uint8ClampedArray,
+  binary: Uint8ClampedArray,
+  w: number,
+  h: number,
+  options?: DeslantOptions
+): DeslantResult;
+export function deslantGrayscale(
+  gray: Uint8ClampedArray,
+  wOrBinary: number | Uint8ClampedArray,
+  hOrW: number,
+  optionsOrH: DeslantOptions | number = {},
+  maybeOptions: DeslantOptions = {}
+): DeslantResult {
+  const hasBinaryArg = wOrBinary instanceof Uint8ClampedArray;
+  const estimateBuf = hasBinaryArg ? wOrBinary : gray;
+  const w = hasBinaryArg ? hOrW : wOrBinary;
+  const h = hasBinaryArg ? (optionsOrH as number) : hOrW;
+  const options = hasBinaryArg ? maybeOptions : (optionsOrH as DeslantOptions);
+
+  if (w < 8 || h < 8) {
+    return {
+      data: new Uint8ClampedArray(gray),
+      width: w,
+      height: h,
+      slantDeg: 0,
+      corrected: false,
+      angleDeg: 0,
+      deslanted: false,
+    };
+  }
+
+  const minCorrection = options.minCorrectionDeg ?? 3.0;
+  const fill = options.backgroundFill ?? 255;
+  const bestDeg = estimateCursiveSlantAngle(estimateBuf, w, h, options);
+
+  if (Math.abs(bestDeg) < minCorrection) {
+    return {
+      data: new Uint8ClampedArray(gray),
+      width: w,
+      height: h,
+      slantDeg: 0,
+      corrected: false,
+      angleDeg: 0,
+      deslanted: false,
+    };
+  }
+
+  const sheared = shearGrayscale(gray, w, h, bestDeg, fill);
   return {
-    data: out,
-    width: outW,
-    height: h,
-    slantDeg: Number(bestDeg.toFixed(1)),
+    data: sheared.data,
+    width: sheared.width,
+    height: sheared.height,
+    slantDeg: bestDeg,
     corrected: true,
+    angleDeg: bestDeg,
+    deslanted: true,
   };
 }
 
