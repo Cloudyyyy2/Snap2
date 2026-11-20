@@ -498,6 +498,22 @@ export default function App() {
   const todayEndIso = `${todayStr}T23:59:59.999Z`;
   const todaySpotlights = reminders.filter((r) => !r.completed && r.dueDate <= todayEndIso);
 
+  // Sync active reminders to host so background random-window push scheduler works even when tab is closed
+  useEffect(() => {
+    const payload = reminders.map((r) => ({
+      id: r.id,
+      title: r.title,
+      dueDate: r.dueDate,
+      completed: r.completed,
+      priority: r.priority,
+    }));
+    fetch('/api/reminders/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reminders: payload }),
+    }).catch(() => {});
+  }, [reminders]);
+
   // Showcase a random Today's Reminder nudge when the user opens or pulls up the app
   useEffect(() => {
     const triggerDailyNudge = () => {

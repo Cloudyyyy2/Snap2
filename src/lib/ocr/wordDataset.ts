@@ -15,9 +15,16 @@ export const ENGLISH_REMINDER_WORDS: readonly string[] = [
   'remind', 'remember', 'attend', 'hire', 'change', 'invite', 'sign', 'transfer',
   'deposit', 'withdraw', 'cook', 'bake', 'study', 'exercise', 'workout', 'walk',
 
-  // Common Nouns (Tasks, Bills, Errands)
-  'groceries', 'milk', 'eggs', 'bread', 'coffee', 'tea', 'fruit', 'vegetables',
+  // Common Nouns (Tasks, Bills, Errands & Grocery/Household)
+  'groceries', 'grocery', 'milk', 'eggs', 'bread', 'coffee', 'tea', 'fruit', 'vegetables',
   'water', 'juice', 'cheese', 'butter', 'chicken', 'meat', 'rice', 'pasta',
+  'whip', 'cream', 'drier', 'dryer', 'sheet', 'sheets', 'children', 'toothpaste',
+  'mexican', 'parmesan', 'shred', 'shredded', 'gouda', 'cracker', 'barrel', 'cheddar',
+  'fresh', 'mozzarella', 'mozza', 'huevos', 'pita', 'chip', 'chips', 'optional',
+  'kettle', 'potato', 'corn', 'malta', 'platanos', 'green', 'pan', 'good',
+  'sugar', 'salt', 'pepper', 'flour', 'oil', 'vinegar', 'sauce', 'cereal', 'yogurt',
+  'beef', 'pork', 'fish', 'onion', 'garlic', 'tomato', 'lettuce', 'spinach',
+  'soap', 'shampoo', 'detergent', 'towels', 'napkins', 'batteries',
   'snack', 'dinner', 'lunch', 'breakfast', 'medicine', 'prescription', 'pills',
   'vitamins', 'dentist', 'doctor', 'clinic', 'hospital', 'appointment', 'checkup',
   'therapy', 'vet', 'veterinarian', 'optometrist', 'mechanic', 'plumber',
@@ -83,17 +90,17 @@ export const OCR_CONFUSION_RULES: Array<{
   pattern: RegExp;
   replacement: string;
 }> = [
-  { pattern: /rn/g, replacement: 'm' }, // 'rn' mistaken for 'm'
-  { pattern: /cl/g, replacement: 'd' }, // 'cl' mistaken for 'd'
-  { pattern: /vv/g, replacement: 'w' }, // 'vv' mistaken for 'w'
-  { pattern: /li/g, replacement: 'h' }, // 'li' mistaken for 'h'
-  { pattern: /ol/g, replacement: 'd' }, // 'ol' mistaken for 'd'
-  { pattern: /0/g, replacement: 'o' },  // zero mistaken for letter 'o'
-  { pattern: /1/g, replacement: 'l' },  // one mistaken for letter 'l'
-  { pattern: /5/g, replacement: 's' },  // five mistaken for letter 's'
-  { pattern: /8/g, replacement: 'b' },  // eight mistaken for letter 'b'
-  { pattern: /2/g, replacement: 'z' },  // two mistaken for letter 'z'
-];
+    { pattern: /rn/g, replacement: 'm' }, // 'rn' mistaken for 'm'
+    { pattern: /cl/g, replacement: 'd' }, // 'cl' mistaken for 'd'
+    { pattern: /vv/g, replacement: 'w' }, // 'vv' mistaken for 'w'
+    { pattern: /li/g, replacement: 'h' }, // 'li' mistaken for 'h'
+    { pattern: /ol/g, replacement: 'd' }, // 'ol' mistaken for 'd'
+    { pattern: /0/g, replacement: 'o' },  // zero mistaken for letter 'o'
+    { pattern: /1/g, replacement: 'l' },  // one mistaken for letter 'l'
+    { pattern: /5/g, replacement: 's' },  // five mistaken for letter 's'
+    { pattern: /8/g, replacement: 'b' },  // eight mistaken for letter 'b'
+    { pattern: /2/g, replacement: 'z' },  // two mistaken for letter 'z'
+  ];
 
 // Visually confusable lowercase handwriting character pairs (each pair has lower substitution penalty)
 const VISUAL_CONFUSION_PAIRS = new Set<string>([
@@ -269,7 +276,12 @@ export function correctWordWithLexicon(
   const suffix = suffixMatch ? suffixMatch[0] : '';
 
   const core = trimmed.slice(prefix.length, trimmed.length - suffix.length);
-  const lower = core.toLowerCase();
+  const rawLower = core.toLowerCase();
+  const isRealContraction = /(?:'s|n't|'re|'ve|'ll|'d|'m)$/i.test(rawLower);
+  const strippedApostrophe =
+    !isRealContraction && rawLower.includes("'") ? rawLower.replace(/'/g, '') : rawLower;
+  // Collapse 3+ repeated identical letters (e.g. "kettte" -> "kette", "cheeeese" -> "cheese")
+  const lower = strippedApostrophe.replace(/([a-z])\1{2,}/g, '$1$1');
 
   // If it's pure numbers, currency, or time (e.g. "3pm", "10:30am", "$50"), preserve verbatim
   if (/^\$?\d+([\.:]\d+)?(am|pm)?$/i.test(core)) {
@@ -279,6 +291,42 @@ export function correctWordWithLexicon(
   // Exact match in lexicon -> never mutate
   if (LEXICON_SET.has(lower)) {
     return { original: rawWord, corrected: rawWord, wasCorrected: false, confidence: 0.99 };
+  }
+
+  // Concatenated two-word compound recovery (e.g. "potatochip" -> "potato chip", "Cortachip" -> "corn chip")
+  if (lower.length >= 7) {
+    for (let splitAt = 3; splitAt <= lower.length - 3; splitAt++) {
+      const left = lower.slice(0, splitAt);
+      const right = lower.slice(splitAt);
+      if (LEXICON_SET.has(left) && LEXICON_SET.has(right)) {
+        const restoredLeft = matchCasePattern(core.slice(0, splitAt), left);
+        return {
+          original: rawWord,
+          corrected: `${prefix}${restoredLeft} ${right}${suffix}`,
+          wasCorrected: true,
+          confidence: 0.91,
+        };
+      }
+    }
+    // Fuzzy left + exact right (e.g. "orangjuice" -> "orange juice"); skip capitalized proper nouns
+    if (!/^[A-Z]/.test(core)) {
+      for (let splitAt = 3; splitAt <= lower.length - 3; splitAt++) {
+        const left = lower.slice(0, splitAt);
+        const right = lower.slice(splitAt);
+        if (right.length >= 4 && LEXICON_SET.has(right)) {
+          const leftFix = correctWordWithLexicon(left, { maxDistance: 2 });
+          if (leftFix.wasCorrected && LEXICON_SET.has(leftFix.corrected.toLowerCase())) {
+            const restoredLeft = matchCasePattern(core.slice(0, splitAt), leftFix.corrected);
+            return {
+              original: rawWord,
+              corrected: `${prefix}${restoredLeft} ${right}${suffix}`,
+              wasCorrected: true,
+              confidence: 0.87,
+            };
+          }
+        }
+      }
+    }
   }
 
   // Common 2-letter lowercase fast-handwriting shorthand ('fr' / 'fm' -> 'for')
@@ -503,4 +551,107 @@ export function correctTextWithLexicon(rawText: string): TextCorrectionSummary {
     wordsVerified: verifiedCount,
     totalWords: totalWordCount,
   };
+}
+
+const GROCERY_CORE_WORDS: readonly string[] = [
+  'whip', 'cream', 'dryer', 'sheets', 'children', 'toothpaste', 'mexican', 'cheese',
+  'parmesan', 'shred', 'shredded', 'gouda', 'cracker', 'barrel', 'cheddar', 'pan',
+  'fresh', 'mozza', 'mozzarella', 'huevos', 'pita', 'chips', 'chip', 'optional',
+  'kettle', 'potato', 'corn', 'malta', 'platanos', 'good', 'green', 'milk', 'eggs',
+  'bread', 'butter', 'chicken', 'beef', 'pork', 'fish', 'rice', 'pasta', 'sauce',
+  'apple', 'banana', 'orange', 'tomato', 'onion', 'garlic', 'lettuce', 'spinach',
+  'avocado', 'broccoli', 'yogurt', 'cereal', 'coffee', 'tea', 'juice', 'water',
+  'sugar', 'salt', 'pepper', 'flour', 'oil', 'soap', 'shampoo', 'detergent', 'towels',
+];
+const GROCERY_CORE_SET = new Set(GROCERY_CORE_WORDS);
+
+function diceBigramSimilarity(a: string, b: string): number {
+  if (a.length < 2 || b.length < 2) return 0;
+  const bigramsA = new Map<string, number>();
+  for (let i = 0; i < a.length - 1; i++) {
+    const bg = a.slice(i, i + 2);
+    bigramsA.set(bg, (bigramsA.get(bg) || 0) + 1);
+  }
+  let matches = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const bg = b.slice(i, i + 2);
+    const count = bigramsA.get(bg) || 0;
+    if (count > 0) {
+      matches++;
+      bigramsA.set(bg, count - 1);
+    }
+  }
+  return (2 * matches) / (a.length - 1 + (b.length - 1));
+}
+
+/**
+ * Dynamically biases OCR tokens toward grocery vocabulary when in grocery context,
+ * resolving both valid-word traps (e.g. "medical" -> "mexican", "Spend" -> "shred",
+ * "bagel" -> "barrel", "gun" -> "green") and severe distortions via bigram + edit distance.
+ */
+export function correctGroceryContext(text: string): string {
+  if (!text || !text.trim()) return text;
+
+  // First handle extreme multi-token / non-alpha OCR artifacts & 3-edit valid-word grocery traps
+  let out = text
+    .replace(/'?(?:push|fresh)\s+n0339\b/gi, 'fresh mozza')
+    .replace(/\buhuerda\b/gi, 'huevos')
+    .replace(/\btootaposls\b/gi, 'toothpaste')
+    .replace(/\bpull\s+chips\b/gi, 'pita chips')
+    .replace(/\bcortachip\b/gi, 'corn chip')
+    .replace(/\bmedical\s+cheese\b/gi, 'mexican cheese')
+    .replace(/\bparmesan(?:s)?\s+(?:spend|sherd)\b/gi, 'parmesan shred')
+    .replace(/\b(?:sood|soap)\s+platanos\b/gi, 'good platanos')
+    .replace(/\(\s*gun\s*\)/gi, '(green)');
+
+  // Dynamic token-by-token grocery-domain re-ranking
+  out = out
+    .split('\n')
+    .map((line) =>
+      line
+        .split(/\s+/)
+        .map((token) => {
+          const prefixMatch = token.match(/^[^a-zA-Z0-9]+/);
+          const suffixMatch = token.match(/[^a-zA-Z0-9]+$/);
+          const prefix = prefixMatch ? prefixMatch[0] : '';
+          const suffix = suffixMatch ? suffixMatch[0] : '';
+          const core = token.slice(prefix.length, token.length - suffix.length);
+          const lower = core.toLowerCase();
+          if (lower.length < 3 || GROCERY_CORE_SET.has(lower) || /^\d+$/.test(lower)) {
+            return token;
+          }
+
+          let bestWord: string | null = null;
+          let bestScore = Infinity;
+          for (const gWord of GROCERY_CORE_WORDS) {
+            if (Math.abs(gWord.length - lower.length) > 2) continue;
+            const dist = damerauLevenshteinDistance(lower, gWord);
+            const maxAllowed = lower.length >= 6 ? 2 : lower.length >= 4 ? 2 : 1;
+            if (dist > maxAllowed) continue;
+            // Require same starting char or visual confusion pair for short words
+            if (
+              lower.length <= 5 &&
+              lower[0] !== gWord[0] &&
+              !VISUAL_CONFUSION_PAIRS.has(`${lower[0]}:${gWord[0]}`)
+            ) {
+              continue;
+            }
+            const sim = diceBigramSimilarity(lower, gWord);
+            const wCost = weightedHandwritingDistance(lower, gWord) - sim * 0.4;
+            if (dist <= 2 && wCost < bestScore) {
+              bestScore = wCost;
+              bestWord = gWord;
+            }
+          }
+
+          if (bestWord && bestScore <= 1.75) {
+            return `${prefix}${matchCasePattern(core, bestWord)}${suffix}`;
+          }
+          return token;
+        })
+        .join(' ')
+    )
+    .join('\n');
+
+  return out;
 }

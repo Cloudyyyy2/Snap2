@@ -2,6 +2,7 @@ export type Category = 'Bills' | 'Events' | 'Tasks' | 'Travel' | 'Work' | 'Perso
 export type Priority = 'high' | 'medium' | 'low';
 export type OcrProfile = 'auto' | 'printed' | 'handwriting';
 export type DetectedStyle = 'printed' | 'handwriting' | 'mixed';
+export type CaptureMode = 'auto' | 'grocery' | 'receipt' | 'recipe' | 'fridge';
 
 export interface OcrNormalizedBox {
   x: number;
@@ -33,6 +34,8 @@ export interface Reminder {
   checklist: ChecklistItem[];
   tags: string[];
   image?: string; // base64 data url or image url
+  completionImage?: string; // optional photo proof when marked complete
+  exportDirName?: string; // host ocr-exports/run-* folder name
   ocrText?: string;
   ocrEngine?: string;
   completed: boolean;

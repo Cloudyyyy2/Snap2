@@ -10,8 +10,10 @@ import {
   Square,
   Send,
   Maximize2,
+  Camera,
 } from 'lucide-react';
 import { Reminder, Category, Priority, ChecklistItem } from '../types';
+import { CameraCapture } from './CameraCapture';
 
 interface ReminderInspectorProps {
   reminder: Reminder;
@@ -39,6 +41,7 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
   const [newChecklistText, setNewChecklistText] = useState('');
   const [newTagText, setNewTagText] = useState('');
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [snapProofOpen, setSnapProofOpen] = useState(false);
 
   useEffect(() => {
     setTitle(reminder.title);
@@ -47,6 +50,7 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
     setNewChecklistText('');
     setNewTagText('');
     setLightboxOpen(false);
+    setSnapProofOpen(false);
   }, [reminder.id, reminder.title, reminder.description, reminder.dueDate]);
 
   const commitTextFields = () => {
@@ -136,6 +140,17 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
             )}
             <span>{reminder.completed ? 'Completed' : 'Mark done'}</span>
           </button>
+          {!reminder.completed && (
+            <button
+              type="button"
+              onClick={() => setSnapProofOpen((v) => !v)}
+              className="min-h-[40px] px-2.5 py-1.5 rounded-xl text-xs font-medium bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+              title="Snap a photo as completion proof"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>Snap Proof</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-0.5">
@@ -178,6 +193,51 @@ export const ReminderInspector: React.FC<ReminderInspectorProps> = ({
 
       {/* Scrollable Properties & Content */}
       <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        {snapProofOpen && (
+          <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-2">
+            <div className="flex items-center justify-between text-xs font-medium text-indigo-700 dark:text-indigo-300">
+              <span>Snap completion proof photo</span>
+              <button
+                type="button"
+                onClick={() => setSnapProofOpen(false)}
+                className="text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+            </div>
+            <CameraCapture
+              embedded
+              onCapture={(dataUrl) => {
+                onUpdate({ ...reminder, completed: true, completionImage: dataUrl });
+                setSnapProofOpen(false);
+              }}
+              onUploadFile={(file) => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  const res = ev.target?.result as string;
+                  if (res) {
+                    onUpdate({ ...reminder, completed: true, completionImage: res });
+                    setSnapProofOpen(false);
+                  }
+                };
+                reader.readAsDataURL(file);
+              }}
+              statusNote="Attach photo proof & mark done"
+            />
+          </div>
+        )}
+        {reminder.completionImage && (
+          <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-2.5 space-y-1.5">
+            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+              Completion Proof
+            </span>
+            <img
+              src={reminder.completionImage}
+              alt="Completion proof"
+              className="w-full max-h-40 object-contain rounded-lg bg-white dark:bg-zinc-950"
+            />
+          </div>
+        )}
         {/* Inline Editable Title & Description */}
         <div className="space-y-2">
           <input

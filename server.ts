@@ -17,7 +17,7 @@ import {
   OcrProfile,
 } from './server/handwritingRecognizer';
 import { isPrintedModelAvailable, getActivePrintedModelName } from './server/printedRecognizer';
-import { parseReminderLocally } from './server/localReminderParser';
+import { parseReminderLocally, LocalCaptureMode } from './server/localReminderParser';
 import { ensureOfflineModels, getModelProvisioningStatus } from './server/modelManager';
 
 const require = createRequire(import.meta.url);
@@ -160,7 +160,7 @@ app.get('/api/local-ocr/status', (_req, res) => {
 
 app.post('/api/local-ocr', async (req, res) => {
   try {
-    const { image, ocrProfile, exportStages, prompt } = req.body || {};
+    const { image, ocrProfile, exportStages, prompt, captureMode } = req.body || {};
     if (!image || typeof image !== 'string') {
       return res.status(400).json({
         success: false,
@@ -171,6 +171,13 @@ app.post('/api/local-ocr', async (req, res) => {
     const validProfile: OcrProfile =
       ocrProfile === 'printed' || ocrProfile === 'handwriting' || ocrProfile === 'auto'
         ? ocrProfile
+        : 'auto';
+    const validMode: LocalCaptureMode =
+      captureMode === 'grocery' ||
+      captureMode === 'receipt' ||
+      captureMode === 'recipe' ||
+      captureMode === 'fridge'
+        ? captureMode
         : 'auto';
 
     if (!isOfflineOnly() && process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
@@ -214,7 +221,8 @@ app.post('/api/local-ocr', async (req, res) => {
           typeof prompt === 'string' ? prompt : undefined,
           result.detectedStyle === 'handwriting' || result.detectedStyle === 'mixed'
             ? ['handwritten']
-            : ['ocr']
+            : ['ocr'],
+          validMode
         )
       : undefined;
 
@@ -384,8 +392,15 @@ async function generateWithGeminiRetry(parts: Array<Record<string, unknown>>) {
 
 app.post('/api/extract-reminder', async (req, res) => {
   try {
-    const { image, prompt, ocrProfile, ocrText } = req.body || {};
+    const { image, prompt, ocrProfile, ocrText, captureMode } = req.body || {};
     const verifiedOcrText = typeof ocrText === 'string' ? ocrText.trim() : '';
+    const validMode: LocalCaptureMode =
+      captureMode === 'grocery' ||
+      captureMode === 'receipt' ||
+      captureMode === 'recipe' ||
+      captureMode === 'fridge'
+        ? captureMode
+        : 'auto';
 
     if (!image && !verifiedOcrText && (!prompt || typeof prompt !== 'string' || !prompt.trim())) {
       return res.status(400).json({
@@ -512,7 +527,8 @@ Extract clear, actionable reminder details as JSON.
       const parsed = parseReminderLocally(
         localText || prompt.trim(),
         localText ? prompt : undefined,
-        usedLocalOcr || ocrProfile === 'handwriting' ? ['handwritten'] : ['note']
+        usedLocalOcr || ocrProfile === 'handwriting' ? ['handwritten'] : ['note'],
+        validMode
       );
       return res.json({
         success: true,
@@ -681,6 +697,87 @@ app.post('/api/push/send-test', async (req, res) => {
   }
 });
 
+// Host-side active reminders sync & background random-window Web Push scheduler
+interface SyncedReminderMeta {
+  id: string;
+  title: string;
+  dueDate: string;
+  completed: boolean;
+  priority?: string;
+}
+const ACTIVE_REMINDERS_PATH = path.resolve(process.cwd(), 'data', 'active-reminders.json');
+let syncedReminders: SyncedReminderMeta[] = [];
+let lastBackgroundPushAt = 0;
+
+function loadSyncedReminders() {
+  try {
+    if (fs.existsSync(ACTIVE_REMINDERS_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(ACTIVE_REMINDERS_PATH, 'utf8'));
+      if (Array.isArray(raw)) syncedReminders = raw;
+    }
+  } catch {
+    syncedReminders = [];
+  }
+}
+
+loadSyncedReminders();
+
+function getDueTodayReminders(): SyncedReminderMeta[] {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayEndIso = `${todayStr}T23:59:59.999Z`;
+  return syncedReminders.filter((r) => !r.completed && r.dueDate <= todayEndIso);
+}
+
+app.post('/api/reminders/sync', (req, res) => {
+  const items = Array.isArray(req.body?.reminders) ? req.body.reminders : [];
+  syncedReminders = items
+    .filter((r: any) => r?.id && r?.title && r?.dueDate)
+    .slice(0, 200)
+    .map((r: any) => ({
+      id: String(r.id),
+      title: String(r.title).slice(0, 120),
+      dueDate: String(r.dueDate),
+      completed: Boolean(r.completed),
+      priority: r.priority ? String(r.priority) : 'medium',
+    }));
+  try {
+    fs.mkdirSync(path.dirname(ACTIVE_REMINDERS_PATH), { recursive: true });
+    fs.writeFileSync(ACTIVE_REMINDERS_PATH, JSON.stringify(syncedReminders, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Failed to persist synced reminders:', err);
+  }
+  res.json({ success: true, count: syncedReminders.length, todayCount: getDueTodayReminders().length });
+});
+
+app.get('/api/reminders/today', (_req, res) => {
+  res.json({ success: true, reminders: getDueTodayReminders() });
+});
+
+function startDailyPushScheduler() {
+  const checkMs = Number(process.env.PUSH_NUDGE_INTERVAL_MS || 5 * 60 * 1000);
+  const cooldownMs = Number(process.env.PUSH_NUDGE_COOLDOWN_MS || 2 * 60 * 60 * 1000);
+  const timer = setInterval(async () => {
+    if (!pushConfigured || pushSubscriptions.size === 0) return;
+    if (Date.now() - lastBackgroundPushAt < cooldownMs) return;
+    const due = getDueTodayReminders();
+    if (due.length === 0) return;
+    // Randomize firing probability (~40% per check window) so nudges feel organic
+    if (Math.random() > 0.4) return;
+    const pick = due[Math.floor(Math.random() * due.length)];
+    try {
+      const sent = await sendPushToTargets(Array.from(pushSubscriptions.values()), {
+        title: "Today's Reminder",
+        body: pick.title,
+        url: '/',
+      });
+      if (sent > 0) lastBackgroundPushAt = Date.now();
+    } catch (err) {
+      console.warn('Background push scheduler error:', err);
+    }
+  }, checkMs);
+  timer.unref?.();
+}
+
 app.post('/api/push/nudge', async (req, res) => {
   try {
     if (!pushConfigured) {
@@ -759,6 +856,7 @@ httpServer.listen(port, host, () => {
   for (const lan of getLanUrls(port, proto)) {
     console.log(`  Phone LAN:  ${lan}`);
   }
+  startDailyPushScheduler();
   if (cloudflareUrl) {
     console.log(`  Cloudflare: ${cloudflareUrl}`);
   }

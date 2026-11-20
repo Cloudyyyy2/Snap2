@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Camera, Loader2, RotateCcw, Sparkles, ShieldCheck, HelpCircle, FolderOpen } from 'lucide-react';
-import { Reminder, DetectedStyle, OcrLineResult } from '../types';
+import { X, Camera, Loader2, RotateCcw, Sparkles, ShieldCheck, HelpCircle, FolderOpen, Layers } from 'lucide-react';
+import { Reminder, DetectedStyle, OcrLineResult, CaptureMode } from '../types';
 import { CameraCapture } from './CameraCapture';
+import { OcrXRayViewer } from './OcrXRayViewer';
 
 interface UploadModalProps {
   onClose: () => void;
@@ -23,6 +24,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [imagePreview, setImagePreview] = useState<string | null>(initialImage);
   const [imageBase64, setImageBase64] = useState<string | null>(initialImage);
   const [promptText, setPromptText] = useState('');
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('auto');
+  const [showXRay, setShowXRay] = useState(false);
   const [localModelReady, setLocalModelReady] = useState<boolean | null>(null);
   const [offlineOnly, setOfflineOnly] = useState(false);
   const [visionConfigured, setVisionConfigured] = useState(false);
@@ -109,6 +112,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         : [],
       tags,
       image: imageBase64 || undefined,
+      exportDirName: exportDirName || undefined,
       ocrText: editableText.trim() || undefined,
       ocrEngine: ocrState?.engineLabel,
       completed: false,
@@ -130,6 +134,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       body: JSON.stringify({
         image: imageBase64,
         ocrProfile: 'auto',
+        captureMode,
         exportStages: true,
       }),
     });
@@ -175,6 +180,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         image: forceVisionImage ? imageBase64 : overrideOcrText !== undefined ? undefined : imageBase64,
         prompt: promptText.trim() || undefined,
         ocrProfile: 'auto',
+        captureMode,
         ocrText: overrideOcrText,
       }),
     });
@@ -318,6 +324,31 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(
+              [
+                { id: 'auto', label: 'Auto' },
+                { id: 'grocery', label: 'Grocery' },
+                { id: 'receipt', label: 'Receipt' },
+                { id: 'recipe', label: 'Recipe' },
+                { id: 'fridge', label: 'Fridge' },
+              ] as const
+            ).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setCaptureMode(m.id)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                  captureMode === m.id
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-zinc-50 dark:bg-zinc-950 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-indigo-400'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
           {imagePreview ? (
             <div className="relative rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 h-52 flex items-center justify-center">
               <div className="relative inline-block h-full max-w-full">
@@ -412,12 +443,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* OCR-to-Image Line Reflection Chips */}
           {ocrLines.length > 0 && (
             <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+              <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 gap-2">
                 <span>Tap or hover a line to highlight it on the photo</span>
                 {exportDirName && (
-                  <span className="inline-flex items-center gap-1 font-mono text-[10px]">
-                    <FolderOpen className="w-3 h-3" /> {exportDirName}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowXRay((v) => !v)}
+                    className="inline-flex items-center gap-1 font-medium text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                  >
+                    <Layers className="w-3 h-3" />
+                    <span>{showXRay ? 'Hide X-Ray' : 'X-Ray Steps'}</span>
+                  </button>
                 )}
               </div>
               <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
@@ -440,6 +476,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             </div>
           )}
+
+          {showXRay && exportDirName && <OcrXRayViewer exportDirName={exportDirName} />}
 
           {/* Editable OCR Text Review (shown after local OCR pass) */}
           {ocrState && !needsUserPurpose && (
@@ -504,6 +542,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   : 'border-zinc-200 dark:border-zinc-800'
               }`}
             />
+            {(needsUserPurpose || captureMode === 'fridge') && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {['Use in 2 days', 'Use this week', 'Buy replacement today'].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setPromptText(preset)}
+                    className="px-2 py-0.5 rounded-md text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

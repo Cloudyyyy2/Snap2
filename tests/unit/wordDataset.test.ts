@@ -3,6 +3,7 @@ import {
   damerauLevenshteinDistance,
   correctWordWithLexicon,
   correctTextWithLexicon,
+  correctGroceryContext,
   ENGLISH_REMINDER_WORDS,
   LEXICON_SET,
 } from '../../src/lib/ocr/wordDataset';
@@ -133,5 +134,40 @@ describe('built-in English and reminder vocabulary dataset & fuzzy spell correct
     expect(
       correctTextWithLexicon('Dr. Smith met Alice Bramwell at 3pm on 5/12 for $12.50').correctedText
     ).toBe('Dr. Smith met Alice Bramwell at 3pm on 5/12 for $12.50');
+  });
+
+  it('auto-corrects real handwritten grocery list OCR misreads and context phrases', () => {
+    expect(correctWordWithLexicon('Sheels').corrected).toBe('Sheets');
+    expect(correctWordWithLexicon('Childen').corrected).toBe('Children');
+    expect(correctWordWithLexicon('parmesans').corrected).toBe('parmesan');
+    expect(correctWordWithLexicon('Cheddas').corrected).toBe('Cheddar');
+    expect(correctWordWithLexicon('chyps').corrected).toBe('chips');
+    expect(correctWordWithLexicon("(opte'snal)").corrected).toBe('(optional)');
+    expect(correctWordWithLexicon('kettte').corrected).toBe('kettle');
+    expect(correctWordWithLexicon('potatochip').corrected).toBe('potato chip');
+
+    const grocery = correctGroceryContext(
+      correctTextWithLexicon(
+        "tootaposls\nmedical Cheese\nparmesans Spend\nCrackle bagel\n'push N0339\nUhuerda\npull chyps (opte'snal)\nCortachip\nSood platanos (gun)"
+      ).correctedText
+    );
+    expect(grocery).toContain('toothpaste');
+    expect(grocery).toContain('mexican cheese');
+    expect(grocery).toContain('parmesan shred');
+    expect(grocery.toLowerCase()).toContain('cracker barrel');
+    expect(grocery).toContain('fresh mozza');
+    expect(grocery).toContain('huevos');
+    expect(grocery).toContain('pita chips (optional)');
+    expect(grocery).toContain('corn chip');
+    expect(grocery).toContain('good platanos (green)');
+
+    // Dynamic unseen grocery distortions (repeated letters, fuzzy compound, valid-word traps)
+    const unseen = correctGroceryContext(
+      correctTextWithLexicon('cheeeese\norangjuice\navocada\nbroccolli').correctedText
+    );
+    expect(unseen.toLowerCase()).toContain('cheese');
+    expect(unseen.toLowerCase()).toContain('orange juice');
+    expect(unseen.toLowerCase()).toContain('avocado');
+    expect(unseen.toLowerCase()).toContain('broccoli');
   });
 });

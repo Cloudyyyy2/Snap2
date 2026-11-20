@@ -1,3 +1,5 @@
+import { correctTextWithLexicon, correctGroceryContext } from '../src/lib/ocr/wordDataset';
+
 export type ReminderCategory =
   | 'Bills'
   | 'Events'
@@ -114,6 +116,8 @@ function inferDueDate(text: string): string {
   return base.toISOString();
 }
 
+export type LocalCaptureMode = 'auto' | 'grocery' | 'receipt' | 'recipe' | 'fridge';
+
 /**
  * Deterministic offline parser that converts OCR text into a structured Reminder
  * without requiring cloud API connectivity.
@@ -121,36 +125,84 @@ function inferDueDate(text: string): string {
 export function parseReminderLocally(
   rawText: string,
   extraPrompt?: string,
-  extraTags: string[] = []
+  extraTags: string[] = [],
+  captureMode: LocalCaptureMode = 'auto'
 ): ParsedReminderPayload {
-  const lines = rawText
+  let autoCorrected = rawText.trim() ? correctTextWithLexicon(rawText).correctedText : rawText;
+  const looksLikeGrocery =
+    captureMode === 'grocery' ||
+    (autoCorrected.match(
+      /\b(cheese|milk|eggs|chips|platanos|toothpaste|parmesan|cheddar|bagel|potato|grocery|groceries|cream)\b/gi
+    )?.length ?? 0) >= 2;
+  if (looksLikeGrocery) {
+    autoCorrected = correctGroceryContext(autoCorrected);
+  }
+
+  const lines = autoCorrected
     .split(/\r?\n/)
     .map((l) => l.replace(/^[-*•\u2022]\s*/, '').replace(/^\[[ xX]?\]\s*/, '').trim())
     .filter(Boolean);
 
-  const combined = [rawText, extraPrompt || ''].filter(Boolean).join('\n');
-  const firstLine = lines[0] || extraPrompt?.trim() || 'Handwritten Note';
-  const title = firstLine.length > 72 ? `${firstLine.slice(0, 69).trim()}...` : firstLine;
+  const combined = [autoCorrected, extraPrompt || ''].filter(Boolean).join('\n');
+  let firstLine = lines[0] || extraPrompt?.trim() || 'Handwritten Note';
 
+  let category = inferCategory(combined);
+  let priority = inferPriority(combined);
+  let dueDate = inferDueDate(combined);
+
+  let checklist =
+    lines.length > 1
+      ? lines.slice(0, 50).map((line, i) => ({
+        id: `chk-${i + 1}`,
+        text: line,
+        completed: false,
+      }))
+      : [];
+
+  if (captureMode === 'grocery') {
+    category = 'Tasks';
+    if (!lines[0]?.toLowerCase().includes('grocery') && lines.length > 1) {
+      firstLine = 'Grocery List';
+      checklist = lines.slice(0, 50).map((line, i) => ({
+        id: `chk-${i + 1}`,
+        text: line,
+        completed: false,
+      }));
+    }
+  } else if (captureMode === 'receipt') {
+    category = 'Bills';
+    const totalMatch = combined.match(/(?:total|amount|sum|due)\s*[:$]?\s*([$€£]?\d+(?:[.,]\d{2})?)/i);
+    if (totalMatch && !firstLine.includes(totalMatch[1])) {
+      firstLine = `Receipt (${totalMatch[1]}) — ${firstLine}`;
+    }
+  } else if (captureMode === 'recipe') {
+    category = 'Tasks';
+    firstLine = lines[0] ? `Recipe: ${lines[0]}` : 'Recipe Shopping List';
+    const ingredientLines = lines.length > 1 ? lines.slice(1) : lines;
+    checklist = ingredientLines.slice(0, 50).map((line, i) => ({
+      id: `chk-${i + 1}`,
+      text: line,
+      completed: false,
+    }));
+  } else if (captureMode === 'fridge') {
+    category = 'Personal';
+    priority = 'high';
+    if (!/\b(today|tomorrow|\d{1,2}\/\d{1,2})\b/i.test(combined)) {
+      const twoDays = new Date();
+      twoDays.setDate(twoDays.getDate() + 2);
+      twoDays.setHours(9, 0, 0, 0);
+      dueDate = twoDays.toISOString();
+    }
+  }
+
+  const title = firstLine.length > 72 ? `${firstLine.slice(0, 69).trim()}...` : firstLine;
   const description =
     lines.length > 1
       ? lines.slice(1).join('\n')
       : rawText.trim() || extraPrompt?.trim() || 'Captured from note';
 
-  const checklist =
-    lines.length > 1
-      ? lines.slice(0, 50).map((line, i) => ({
-          id: `chk-${i + 1}`,
-          text: line,
-          completed: false,
-        }))
-      : [];
-
-  const category = inferCategory(combined);
-  const priority = inferPriority(combined);
-  const dueDate = inferDueDate(combined);
-
-  const tags = Array.from(new Set([...extraTags, category.toLowerCase()]));
+  const modeTag = captureMode !== 'auto' ? [captureMode] : [];
+  const tags = Array.from(new Set([...extraTags, ...modeTag, category.toLowerCase()]));
 
   return {
     title,
