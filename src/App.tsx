@@ -495,6 +495,40 @@ export default function App() {
 
   const activeCount = reminders.filter((r) => !r.completed).length;
   const todayCount = reminders.filter((r) => !r.completed && r.dueDate.startsWith(todayStr)).length;
+  const todayEndIso = `${todayStr}T23:59:59.999Z`;
+  const todaySpotlights = reminders.filter((r) => !r.completed && r.dueDate <= todayEndIso);
+
+  // Showcase a random Today's Reminder nudge when the user opens or pulls up the app
+  useEffect(() => {
+    const triggerDailyNudge = () => {
+      if (todaySpotlights.length === 0) return;
+      const lastNudgeAt = Number(sessionStorage.getItem('snapremind_last_nudge') || '0');
+      if (Date.now() - lastNudgeAt < 1000 * 60 * 15) return; // at most once per 15m per tab session
+      sessionStorage.setItem('snapremind_last_nudge', String(Date.now()));
+      const pick = todaySpotlights[Math.floor(Math.random() * todaySpotlights.length)];
+      showToast(`Today's Reminder: ${pick.title}`, 'success', {
+        label: 'View',
+        onClick: () => setActiveReminder(pick),
+      });
+      if (pushEnabled) {
+        fetch('/api/push/nudge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: "Today's Reminder",
+            body: pick.title,
+          }),
+        }).catch(() => {});
+      }
+    };
+
+    triggerDailyNudge();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') triggerDailyNudge();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [todaySpotlights.length, pushEnabled]);
 
   // Board columns
   const urgentOrOverdue = sortedReminders.filter(
@@ -626,6 +660,48 @@ export default function App() {
 
             {/* Quick-Capture Bar (hidden in Search tab to keep search focused) */}
             {currentFilter !== 'search' && (
+              <>
+                {todaySpotlights.length > 0 && currentFilter !== 'today' && (
+                  <section
+                    aria-label="Today's Reminders"
+                    className="rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/25 p-3.5 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+                        <h2 className="text-xs font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                          Today&apos;s Reminders ({todaySpotlights.length})
+                        </h2>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCurrentFilter('today')}
+                        className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                      >
+                        See all
+                      </button>
+                    </div>
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                      {todaySpotlights.slice(0, 4).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setActiveReminder(item)}
+                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white/90 dark:bg-zinc-900/90 border border-indigo-100 dark:border-indigo-900/50 text-left hover:border-indigo-400 transition-colors"
+                        >
+                          <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate">
+                            {item.title}
+                          </span>
+                          {item.checklist.length > 0 && (
+                            <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 shrink-0">
+                              {item.checklist.filter((c) => c.completed).length}/{item.checklist.length}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
               <div
                 className={`rounded-2xl border transition-colors ${
                   isDragOver
@@ -684,6 +760,7 @@ export default function App() {
                   )}
                 </div>
               </div>
+              </>
             )}
 
             {/* Workspace Toolbar: Count + View Switcher + Sort */}

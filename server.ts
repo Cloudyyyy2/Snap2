@@ -4,6 +4,10 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { createRequire } from 'module';
 import type webpushType from 'web-push';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import http from 'http';
+import https from 'https';
+import os from 'os';
 import path from 'path';
 import {
   processImageWithLocalOcr,
@@ -55,15 +59,50 @@ if (pushConfigured) {
   }
 }
 
-// In-memory store for active browser push subscriptions in the current server session
+const isOfflineOnly = () => process.env.OFFLINE_ONLY === '1';
+
+// Disk-persisted store for active browser push subscriptions
+const PUSH_STORE_PATH = path.resolve(process.cwd(), 'data', 'push-subscriptions.json');
 const pushSubscriptions = new Map<string, webpushType.PushSubscription>();
 
+function loadPushSubscriptions() {
+  try {
+    if (fs.existsSync(PUSH_STORE_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(PUSH_STORE_PATH, 'utf8'));
+      if (Array.isArray(raw)) {
+        for (const sub of raw) {
+          if (sub?.endpoint) pushSubscriptions.set(sub.endpoint, sub);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load persisted push subscriptions:', err);
+  }
+}
+
+function savePushSubscriptions() {
+  try {
+    fs.mkdirSync(path.dirname(PUSH_STORE_PATH), { recursive: true });
+    fs.writeFileSync(
+      PUSH_STORE_PATH,
+      JSON.stringify(Array.from(pushSubscriptions.values()), null, 2),
+      'utf8'
+    );
+  } catch (err) {
+    console.warn('Failed to persist push subscriptions:', err);
+  }
+}
+
+loadPushSubscriptions();
+
 app.get('/api/health', (_req, res) => {
+  const offlineOnly = isOfflineOnly();
   res.json({
     status: 'ok',
-    aiConfigured: Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY),
-    groqConfigured: Boolean(process.env.GROQ_API_KEY),
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    offlineOnly,
+    aiConfigured: !offlineOnly && Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY),
+    groqConfigured: !offlineOnly && Boolean(process.env.GROQ_API_KEY),
+    geminiConfigured: !offlineOnly && Boolean(process.env.GEMINI_API_KEY),
     supabaseConfigured: Boolean(process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY),
     pushConfigured,
   });
@@ -71,16 +110,19 @@ app.get('/api/health', (_req, res) => {
 
 // Safe public client configuration (never exposes private keys or DB URLs)
 app.get('/api/config', (_req, res) => {
+  const offlineOnly = isOfflineOnly();
   res.json({
+    offlineOnly,
     supabaseUrl: process.env.VITE_SUPABASE_URL || '',
     supabaseAnonKey: process.env.VITE_SUPABASE_ANON_KEY || '',
     vapidPublicKey,
-    groqConfigured: Boolean(process.env.GROQ_API_KEY),
+    groqConfigured: !offlineOnly && Boolean(process.env.GROQ_API_KEY),
     pushConfigured,
   });
 });
 
 app.get('/api/local-ocr/status', (_req, res) => {
+  const offlineOnly = isOfflineOnly();
   const hwName = getActiveHandwritingModelName();
   const printedName = getActivePrintedModelName();
   const hwReady = isHandwritingModelAvailable();
@@ -99,6 +141,7 @@ app.get('/api/local-ocr/status', (_req, res) => {
       : 'missing';
 
   res.json({
+    offlineOnly,
     handwritingModel,
     printedModel,
     handwritingModelState: hwReady ? 'ready' : prov.handwritingModelState,
@@ -109,9 +152,9 @@ app.get('/api/local-ocr/status', (_req, res) => {
     handwritingModelId: hwName,
     printedModelId: printedName,
     modelId: `${hwName}+${printedName}`,
-    groqConfigured: Boolean(process.env.GROQ_API_KEY),
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
-    visionConfigured: Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY),
+    groqConfigured: !offlineOnly && Boolean(process.env.GROQ_API_KEY),
+    geminiConfigured: !offlineOnly && Boolean(process.env.GEMINI_API_KEY),
+    visionConfigured: !offlineOnly && Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY),
   });
 });
 
@@ -130,7 +173,7 @@ app.post('/api/local-ocr', async (req, res) => {
         ? ocrProfile
         : 'auto';
 
-    if (process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
+    if (!isOfflineOnly() && process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
       if (validProfile !== 'printed' && !isHandwritingModelAvailable()) {
         await ensureOfflineModels({
           includeHandwriting: true,
@@ -140,6 +183,20 @@ app.post('/api/local-ocr', async (req, res) => {
         await ensureOfflineModels({
           includeHandwriting: false,
           includePrinted: true,
+        });
+      }
+    } else {
+      const hasNeeded =
+        validProfile === 'printed'
+          ? isPrintedModelAvailable()
+          : validProfile === 'handwriting'
+            ? isHandwritingModelAvailable()
+            : isHandwritingModelAvailable() || isPrintedModelAvailable();
+      if (!hasNeeded) {
+        return res.status(503).json({
+          success: false,
+          error:
+            'Offline local OCR models are missing under public/models/. Run "npm run models:handwriting" while online once.',
         });
       }
     }
@@ -163,6 +220,8 @@ app.post('/api/local-ocr', async (req, res) => {
 
     res.json({
       success: true,
+      offlineOnly: isOfflineOnly(),
+      exportDirName: result.exportDir ? path.basename(result.exportDir) : undefined,
       ...result,
       data: deterministicData,
     });
@@ -371,8 +430,8 @@ Extract clear, actionable reminder details as JSON.
       }
     }
 
-    // Prefer Groq Vision/Text LLM when configured, with Gemini fallback
-    if (process.env.GROQ_API_KEY) {
+    // Prefer Groq Vision/Text LLM when configured AND not in OFFLINE_ONLY mode
+    if (!isOfflineOnly() && process.env.GROQ_API_KEY) {
       try {
         const groqResult = await extractWithGroq(imageForVision, instructionText);
         if (groqResult) {
@@ -389,7 +448,7 @@ Extract clear, actionable reminder details as JSON.
       }
     }
 
-    if (process.env.GEMINI_API_KEY) {
+    if (!isOfflineOnly() && process.env.GEMINI_API_KEY) {
       try {
         let imagePart: { inlineData: { mimeType: string; data: string } } | null = null;
         if (imageForVision && typeof imageForVision === 'string') {
@@ -436,6 +495,7 @@ Extract clear, actionable reminder details as JSON.
     // Offline / local deterministic fallback when OCR text is available or local TrOCR can read the image
     let localText = verifiedOcrText;
     let usedLocalOcr = false;
+    let localResMeta: Awaited<ReturnType<typeof processImageWithLocalOcr>> | null = null;
 
     if (!localText && image && typeof image === 'string' && (isHandwritingModelAvailable() || isPrintedModelAvailable())) {
       const localRes = await processImageWithLocalOcr({
@@ -444,6 +504,7 @@ Extract clear, actionable reminder details as JSON.
         exportStages: true,
       });
       localText = localRes.text;
+      localResMeta = localRes;
       usedLocalOcr = true;
     }
 
@@ -455,16 +516,31 @@ Extract clear, actionable reminder details as JSON.
       );
       return res.json({
         success: true,
+        offlineOnly: isOfflineOnly(),
         provider: 'local-parser',
         ocrProfile: ocrProfile || 'auto',
         ocrText: localText,
+        lines: localResMeta?.lines,
+        imageWidth: localResMeta?.imageWidth,
+        imageHeight: localResMeta?.imageHeight,
+        exportDirName: localResMeta?.exportDir ? path.basename(localResMeta.exportDir) : undefined,
+        needsUserPurpose: false,
         data: parsed,
       });
     }
 
-    return res.status(500).json({
-      success: false,
-      error: 'No AI provider succeeded and no readable local text was extracted.',
+    return res.json({
+      success: true,
+      offlineOnly: isOfflineOnly(),
+      provider: 'local-parser',
+      ocrProfile: ocrProfile || 'auto',
+      ocrText: '',
+      lines: localResMeta?.lines || [],
+      imageWidth: localResMeta?.imageWidth,
+      imageHeight: localResMeta?.imageHeight,
+      exportDirName: localResMeta?.exportDir ? path.basename(localResMeta.exportDir) : undefined,
+      needsUserPurpose: true,
+      data: null,
     });
   } catch (error: any) {
     console.error('Error extracting reminder:', error);
@@ -476,6 +552,79 @@ Extract clear, actionable reminder details as JSON.
   }
 });
 
+// Read-only OCR stage export listing & safe static serving
+const OCR_EXPORTS_ROOT = path.resolve(process.cwd(), 'ocr-exports');
+
+app.get('/api/ocr-exports', (_req, res) => {
+  try {
+    if (!fs.existsSync(OCR_EXPORTS_ROOT)) {
+      return res.json({ success: true, root: OCR_EXPORTS_ROOT, runs: [] });
+    }
+    const runs = fs
+      .readdirSync(OCR_EXPORTS_ROOT, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('run-'))
+      .map((d) => {
+        const runPath = path.join(OCR_EXPORTS_ROOT, d.name);
+        const files = fs
+          .readdirSync(runPath)
+          .filter((f) => f.endsWith('.png') || f.endsWith('.txt'))
+          .sort();
+        return {
+          name: d.name,
+          files,
+          urls: files.map((f) => `/ocr-exports/${encodeURIComponent(d.name)}/${encodeURIComponent(f)}`),
+        };
+      })
+      .sort((a, b) => b.name.localeCompare(a.name))
+      .slice(0, 20);
+    res.json({ success: true, root: OCR_EXPORTS_ROOT, runs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to list OCR exports.' });
+  }
+});
+
+app.get('/ocr-exports/:run/:file', (req, res) => {
+  const { run, file } = req.params;
+  if (!/^run-[a-zA-Z0-9._-]+$/.test(run) || !/^[a-zA-Z0-9._-]+\.(png|txt)$/.test(file)) {
+    return res.status(400).json({ success: false, error: 'Invalid export path.' });
+  }
+  const resolved = path.resolve(OCR_EXPORTS_ROOT, run, file);
+  if (!resolved.startsWith(OCR_EXPORTS_ROOT + path.sep) || !fs.existsSync(resolved)) {
+    return res.status(404).json({ success: false, error: 'Export file not found.' });
+  }
+  res.sendFile(resolved);
+});
+
+async function sendPushToTargets(
+  targets: webpushType.PushSubscription[],
+  payloadObj: { title: string; body: string; url?: string }
+) {
+  const payload = JSON.stringify({
+    title: payloadObj.title,
+    body: payloadObj.body,
+    url: payloadObj.url || '/',
+  });
+  let sent = 0;
+  let pruned = false;
+  await Promise.all(
+    targets.map(async (sub) => {
+      try {
+        await webpush.sendNotification(sub, payload);
+        sent++;
+      } catch (err: any) {
+        if (err?.statusCode === 404 || err?.statusCode === 410) {
+          pushSubscriptions.delete(sub.endpoint);
+          pruned = true;
+        } else {
+          throw err;
+        }
+      }
+    })
+  );
+  if (pruned) savePushSubscriptions();
+  return sent;
+}
+
 // Web Push endpoints
 app.post('/api/push/subscribe', (req, res) => {
   const { subscription } = req.body || {};
@@ -483,6 +632,7 @@ app.post('/api/push/subscribe', (req, res) => {
     return res.status(400).json({ success: false, error: 'Invalid push subscription payload.' });
   }
   pushSubscriptions.set(subscription.endpoint, subscription);
+  savePushSubscriptions();
   res.json({ success: true });
 });
 
@@ -490,6 +640,7 @@ app.post('/api/push/unsubscribe', (req, res) => {
   const { endpoint } = req.body || {};
   if (endpoint) {
     pushSubscriptions.delete(endpoint);
+    savePushSubscriptions();
   }
   res.json({ success: true });
 });
@@ -515,20 +666,39 @@ app.post('/api/push/send-test', async (req, res) => {
       });
     }
 
-    const payload = JSON.stringify({
+    const sent = await sendPushToTargets(targets, {
       title: title || 'SnapRemind Push Active',
       body: body || 'Web Push notifications are configured and working!',
       url: '/',
     });
-
-    await Promise.all(targets.map((sub) => webpush.sendNotification(sub, payload)));
-    res.json({ success: true, sent: targets.length });
+    res.json({ success: true, sent });
   } catch (error: any) {
     console.error('Error sending push notification:', error);
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to send push notification.',
     });
+  }
+});
+
+app.post('/api/push/nudge', async (req, res) => {
+  try {
+    if (!pushConfigured) {
+      return res.json({ success: false, skipped: true, reason: 'push-not-configured' });
+    }
+    const targets = Array.from(pushSubscriptions.values());
+    if (targets.length === 0) {
+      return res.json({ success: false, skipped: true, reason: 'no-subscriptions' });
+    }
+    const { title, body } = req.body || {};
+    const sent = await sendPushToTargets(targets, {
+      title: title || "Today's Reminder",
+      body: body || 'You have an active reminder for today — tap to review.',
+      url: '/',
+    });
+    res.json({ success: true, sent });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || 'Failed to send nudge.' });
   }
 });
 
@@ -549,20 +719,51 @@ if (!isProd) {
 }
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const host = process.env.HOST || '0.0.0.0';
+const httpsKeyPath = process.env.HTTPS_KEY_PATH || '';
+const httpsCertPath = process.env.HTTPS_CERT_PATH || '';
+const useHttps = Boolean(
+  httpsKeyPath && httpsCertPath && fs.existsSync(httpsKeyPath) && fs.existsSync(httpsCertPath)
+);
+const proto = useHttps ? 'https' : 'http';
 const localUrl =
   process.env.APP_URL && !process.env.APP_URL.includes('MY_APP_URL')
     ? process.env.APP_URL
-    : `http://localhost:${port}`;
+    : `${proto}://localhost:${port}`;
 const cloudflareUrl = process.env.CLOUDFLARE_URL || '';
 
-app.listen(port, () => {
+function getLanUrls(p: number, scheme: string): string[] {
+  const urls: string[] = [];
+  const ifaces = os.networkInterfaces();
+  for (const entries of Object.values(ifaces)) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal) {
+        urls.push(`${scheme}://${entry.address}:${p}`);
+      }
+    }
+  }
+  return urls;
+}
+
+const httpServer = useHttps
+  ? https.createServer(
+      { key: fs.readFileSync(httpsKeyPath), cert: fs.readFileSync(httpsCertPath) },
+      app
+    )
+  : http.createServer(app);
+
+httpServer.listen(port, host, () => {
   console.log('SnapRemind server running:');
   console.log(`  Local:      ${localUrl}`);
+  console.log(`  Mode:       ${isOfflineOnly() ? 'OFFLINE_ONLY (100% in-house)' : 'Standard'}`);
+  for (const lan of getLanUrls(port, proto)) {
+    console.log(`  Phone LAN:  ${lan}`);
+  }
   if (cloudflareUrl) {
     console.log(`  Cloudflare: ${cloudflareUrl}`);
   }
 
-  if (process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
+  if (!isOfflineOnly() && process.env.SKIP_AUTO_MODEL_DOWNLOAD !== '1') {
     ensureOfflineModels()
       .then((s) => {
         console.log(

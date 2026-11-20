@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Camera, Loader2, RotateCcw, Sparkles } from 'lucide-react';
-import { Reminder, DetectedStyle } from '../types';
+import { X, Camera, Loader2, RotateCcw, Sparkles, ShieldCheck, HelpCircle, FolderOpen } from 'lucide-react';
+import { Reminder, DetectedStyle, OcrLineResult } from '../types';
 import { CameraCapture } from './CameraCapture';
 
 interface UploadModalProps {
@@ -24,8 +24,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [imageBase64, setImageBase64] = useState<string | null>(initialImage);
   const [promptText, setPromptText] = useState('');
   const [localModelReady, setLocalModelReady] = useState<boolean | null>(null);
+  const [offlineOnly, setOfflineOnly] = useState(false);
+  const [visionConfigured, setVisionConfigured] = useState(false);
 
   const [ocrState, setOcrState] = useState<LocalOcrState | null>(null);
+  const [ocrLines, setOcrLines] = useState<OcrLineResult[]>([]);
+  const [highlightedLineIdx, setHighlightedLineIdx] = useState<number | null>(null);
+  const [exportDirName, setExportDirName] = useState<string | null>(null);
+  const [needsUserPurpose, setNeedsUserPurpose] = useState(false);
   const [editableText, setEditableText] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [statusStep, setStatusStep] = useState<string>('');
@@ -40,6 +46,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           setLocalModelReady(
             data.handwritingModel === 'ready' || data.printedModel === 'ready'
           );
+          setOfflineOnly(Boolean(data.offlineOnly));
+          setVisionConfigured(Boolean(data.visionConfigured));
         }
       })
       .catch(() => {
@@ -57,6 +65,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setImagePreview(result);
       setImageBase64(result);
       setOcrState(null);
+      setOcrLines([]);
+      setHighlightedLineIdx(null);
+      setExportDirName(null);
+      setNeedsUserPurpose(false);
       setEditableText('');
       setErrorMsg(null);
     };
@@ -128,7 +140,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
 
     if (data.recognizer !== 'vision-fallback') {
-      const linesCount = Array.isArray(data.lines) ? data.lines.length : 0;
+      const lines: OcrLineResult[] = Array.isArray(data.lines) ? data.lines : [];
+      const linesCount = lines.length;
       const engineLabel =
         data.recognizer === 'hybrid-host'
           ? 'Auto · Mixed (Offline)'
@@ -137,16 +150,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             : 'Auto · Handwriting (Offline)';
 
       setEditableText(data.text || '');
+      setOcrLines(lines);
+      setHighlightedLineIdx(null);
+      setExportDirName(data.exportDirName || null);
+      const isObjectOrBlank = Boolean(data.needsUserPurpose || !data.text?.trim());
+      setNeedsUserPurpose(isObjectOrBlank);
       setOcrState({
         linesCount,
         detectedStyle: data.detectedStyle || 'handwriting',
         engineLabel,
       });
-      if (!data.text) {
-        setErrorMsg(
-          'No clear text lines were recognized offline. Edit the text below, tap Re-scan, or switch to Vision AI.'
-        );
-      }
       return true;
     }
 
@@ -175,10 +188,23 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       throw new Error(data.error || `Failed to extract reminder (HTTP ${res.status})`);
     }
 
+    if (data.needsUserPurpose && !data.data) {
+      setNeedsUserPurpose(true);
+      setExportDirName(data.exportDirName || null);
+      setOcrState({
+        linesCount: 0,
+        detectedStyle: 'printed',
+        engineLabel: 'Object / No-Text Photo (Offline)',
+      });
+      return;
+    }
+
     const tag =
       ocrState?.detectedStyle === 'handwriting' || ocrState?.detectedStyle === 'mixed'
         ? 'handwritten'
-        : undefined;
+        : needsUserPurpose
+          ? 'photo-note'
+          : undefined;
     finalizeReminderFromApi(data, tag);
   };
 
@@ -293,19 +319,54 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           )}
 
           {imagePreview ? (
-            <div className="relative rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 h-48 flex items-center justify-center">
-              <img
-                src={imagePreview}
-                alt="Uploaded note or screenshot preview"
-                referrerPolicy="no-referrer"
-                className="h-full object-contain"
-              />
+            <div className="relative rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 h-52 flex items-center justify-center">
+              <div className="relative inline-block h-full max-w-full">
+                <img
+                  src={imagePreview}
+                  alt="Uploaded note or screenshot preview"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-auto max-w-full object-contain block"
+                />
+                {ocrLines.map((line, idx) => {
+                  if (!line.normBox) return null;
+                  const isActive = highlightedLineIdx === idx;
+                  return (
+                    <div
+                      key={idx}
+                      title={line.text}
+                      onMouseEnter={() => setHighlightedLineIdx(idx)}
+                      onMouseLeave={() => setHighlightedLineIdx(null)}
+                      onClick={() => setHighlightedLineIdx(isActive ? null : idx)}
+                      style={{
+                        left: `${line.normBox.x * 100}%`,
+                        top: `${line.normBox.y * 100}%`,
+                        width: `${line.normBox.width * 100}%`,
+                        height: `${line.normBox.height * 100}%`,
+                      }}
+                      className={`absolute border transition-colors cursor-pointer rounded-[2px] ${
+                        isActive
+                          ? 'border-amber-400 bg-amber-400/25 ring-2 ring-amber-400/60'
+                          : 'border-indigo-500/70 bg-indigo-500/10 hover:bg-indigo-500/20'
+                      }`}
+                    />
+                  );
+                })}
+              </div>
+              {offlineOnly && (
+                <span className="absolute top-2.5 left-2.5 bg-emerald-600/90 text-white px-2 py-0.5 rounded-md text-[10px] font-medium inline-flex items-center gap-1 shadow-sm">
+                  <ShieldCheck className="w-3 h-3" /> Offline In-House
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   setImagePreview(null);
                   setImageBase64(null);
                   setOcrState(null);
+                  setOcrLines([]);
+                  setHighlightedLineIdx(null);
+                  setExportDirName(null);
+                  setNeedsUserPurpose(false);
                   setEditableText('');
                   setErrorMsg(null);
                 }}
@@ -336,8 +397,52 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             />
           )}
 
+          {needsUserPurpose && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+              <HelpCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+              <div>
+                <p className="font-semibold">No readable text found — what is this photo for?</p>
+                <p className="text-[11px] opacity-85 mt-0.5">
+                  Describe what you want to remember below (e.g. &ldquo;Buy replacement water filter today at 5pm&rdquo;) and tap Create Reminder.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* OCR-to-Image Line Reflection Chips */}
+          {ocrLines.length > 0 && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                <span>Tap or hover a line to highlight it on the photo</span>
+                {exportDirName && (
+                  <span className="inline-flex items-center gap-1 font-mono text-[10px]">
+                    <FolderOpen className="w-3 h-3" /> {exportDirName}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {ocrLines.map((line, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onMouseEnter={() => setHighlightedLineIdx(idx)}
+                    onMouseLeave={() => setHighlightedLineIdx(null)}
+                    onClick={() => setHighlightedLineIdx(highlightedLineIdx === idx ? null : idx)}
+                    className={`px-2 py-0.5 rounded text-[11px] border transition-colors text-left ${
+                      highlightedLineIdx === idx
+                        ? 'bg-amber-100 dark:bg-amber-900/50 border-amber-400 text-amber-900 dark:text-amber-100'
+                        : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
+                    }`}
+                  >
+                    {line.text}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Editable OCR Text Review (shown after local OCR pass) */}
-          {ocrState && (
+          {ocrState && !needsUserPurpose && (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
@@ -365,29 +470,39 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <RotateCcw className="w-3 h-3" />
                   <span>Re-scan offline</span>
                 </button>
-                <button
-                  type="button"
-                  disabled={isExtracting}
-                  onClick={handleFallbackVisionAi}
-                  className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 inline-flex items-center gap-1 whitespace-nowrap"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  <span>Use Vision AI instead</span>
-                </button>
+                {!offlineOnly && visionConfigured && (
+                  <button
+                    type="button"
+                    disabled={isExtracting}
+                    onClick={handleFallbackVisionAi}
+                    className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 inline-flex items-center gap-1 whitespace-nowrap"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Use Vision AI instead</span>
+                  </button>
+                )}
               </div>
             </div>
           )}
 
           <div>
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
-              Optional context
+              {needsUserPurpose ? 'What is this photo for? (Required)' : 'Optional context'}
             </label>
             <input
               type="text"
               value={promptText}
               onChange={(e) => setPromptText(e.target.value)}
-              placeholder="e.g. Remind me 2 days before the due date"
-              className="w-full h-9 px-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-indigo-500"
+              placeholder={
+                needsUserPurpose
+                  ? 'e.g. Buy replacement water filter today at 5pm'
+                  : 'e.g. Remind me 2 days before the due date'
+              }
+              className={`w-full h-9 px-3 bg-zinc-50 dark:bg-zinc-950 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-indigo-500 ${
+                needsUserPurpose
+                  ? 'border-amber-400 dark:border-amber-600'
+                  : 'border-zinc-200 dark:border-zinc-800'
+              }`}
             />
           </div>
         </div>

@@ -72,6 +72,13 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
         expect(res.processedPreview?.startsWith('data:image/png;base64,')).toBe(true);
 
         const dir = res.exportDir!;
+        expect(path.basename(dir)).toMatch(/^run-\d{8}-\d{6}-\d{3}-handwriting$/);
+        expect(res.needsUserPurpose).toBe(false);
+        expect(res.lines[0].normBox).toBeDefined();
+        expect(res.lines[0].normBox!.x).toBeGreaterThanOrEqual(0);
+        expect(res.lines[0].normBox!.x).toBeLessThanOrEqual(1);
+        expect(fs.existsSync(path.join(dir, '01_original.png'))).toBe(true);
+        expect(fs.existsSync(path.join(dir, '02_deskewed.png'))).toBe(true);
         expect(fs.existsSync(path.join(dir, '03b_background_flattened.png'))).toBe(true);
         expect(fs.existsSync(path.join(dir, '03c_ruled_lines_removed.png'))).toBe(true);
         expect(fs.existsSync(path.join(dir, '04_contrast_enhanced.png'))).toBe(true);
@@ -335,4 +342,22 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
     },
     30000
   );
+
+  it('flags non-text / blank images with needsUserPurpose=true', async () => {
+    const blankPng = await sharp({
+      create: { width: 320, height: 240, channels: 3, background: { r: 245, g: 245, b: 245 } },
+    })
+      .png()
+      .toBuffer();
+
+    const res = await processImageWithLocalOcr({
+      imageBuffer: blankPng,
+      ocrProfile: 'auto',
+      exportStages: false,
+    });
+
+    expect(res.text).toBe('');
+    expect(res.lines).toEqual([]);
+    expect(res.needsUserPurpose).toBe(true);
+  });
 });

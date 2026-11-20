@@ -3,6 +3,20 @@ export type Priority = 'high' | 'medium' | 'low';
 export type OcrProfile = 'auto' | 'printed' | 'handwriting';
 export type DetectedStyle = 'printed' | 'handwriting' | 'mixed';
 
+export interface OcrNormalizedBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface OcrLineResult {
+  text: string;
+  confidence: number;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  normBox?: OcrNormalizedBox;
+}
+
 export interface ChecklistItem {
   id: string;
   text: string;

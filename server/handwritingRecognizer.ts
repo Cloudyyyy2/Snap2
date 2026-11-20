@@ -63,6 +63,7 @@ export interface LocalOcrLineResult {
   text: string;
   confidence: number;
   bbox: { x0: number; y0: number; x1: number; y1: number };
+  normBox?: { x: number; y: number; width: number; height: number };
 }
 
 export interface LocalOcrResponse {
@@ -81,6 +82,9 @@ export interface LocalOcrResponse {
   appliedSteps: string[];
   regionsCount: number;
   processedPreview?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  needsUserPurpose?: boolean;
   droppedHallucinations?: number;
   exportDir?: string;
   accuracyScore?: number;
@@ -664,8 +668,22 @@ export async function processImageWithLocalOcr(params: {
 
   let runExportDir: string | undefined;
   if (exportStages) {
-    runExportDir = path.join(exportRoot, `run-${Date.now()}`);
+    const now = new Date();
+    const stamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+      '-',
+      String(now.getHours()).padStart(2, '0'),
+      String(now.getMinutes()).padStart(2, '0'),
+      String(now.getSeconds()).padStart(2, '0'),
+      '-',
+      String(now.getMilliseconds()).padStart(3, '0'),
+    ].join('');
+    runExportDir = path.join(exportRoot, `run-${stamp}-${ocrProfile}`);
     fs.mkdirSync(runExportDir, { recursive: true });
+    await saveGrayscalePng(path.join(runExportDir, '01_original.png'), rawGray, info.width, info.height);
+    await saveGrayscalePng(path.join(runExportDir, '02_deskewed.png'), workGray, workGrayW, workGrayH);
     if (exportFlattenedGray) {
       await saveGrayscalePng(
         path.join(runExportDir, '03b_background_flattened.png'),
@@ -713,6 +731,9 @@ export async function processImageWithLocalOcr(params: {
       appliedSteps,
       regionsCount: regions.length,
       processedPreview,
+      imageWidth: w,
+      imageHeight: h,
+      needsUserPurpose: true,
       exportDir: runExportDir,
     };
   }
@@ -735,6 +756,9 @@ export async function processImageWithLocalOcr(params: {
       appliedSteps,
       regionsCount: regions.length,
       processedPreview,
+      imageWidth: w,
+      imageHeight: h,
+      needsUserPurpose: true,
       exportDir: runExportDir,
     };
   }
@@ -1118,6 +1142,27 @@ export async function processImageWithLocalOcr(params: {
       result.accuracyScore = lexiconRes.accuracyScore;
       result.verifiedWords = lexiconRes.wordsVerified;
       result.totalWords = lexiconRes.totalWords;
+    }
+
+    result.imageWidth = w;
+    result.imageHeight = h;
+    result.needsUserPurpose = !result.text.trim() || result.lines.length === 0;
+    if (w > 0 && h > 0) {
+      result.lines = result.lines.map((l) => {
+        const x = Math.max(0, Math.min(1, l.bbox.x0 / w));
+        const y = Math.max(0, Math.min(1, l.bbox.y0 / h));
+        const right = Math.max(x, Math.min(1, l.bbox.x1 / w));
+        const bottom = Math.max(y, Math.min(1, l.bbox.y1 / h));
+        return {
+          ...l,
+          normBox: {
+            x,
+            y,
+            width: Math.max(0.01, right - x),
+            height: Math.max(0.01, bottom - y),
+          },
+        };
+      });
     }
 
     if (runExportDir) {
