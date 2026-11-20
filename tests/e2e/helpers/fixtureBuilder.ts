@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import type { FixtureEntry, Manifest } from './types';
 
@@ -533,7 +534,7 @@ export async function generateAllFixtures(fixturesDir: string): Promise<Manifest
   // 19. Reminder full flow (Tier 4 S5)
   await svgToPng(
     makeTextSvg({
-      width: 780,
+      width: 880,
       height: 190,
       fontFamily: 'Segoe Print',
       fontSize: 34,
@@ -822,9 +823,9 @@ export async function generateAllFixtures(fixturesDir: string): Promise<Manifest
 
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
 ) {
-  const dir = path.resolve(process.cwd(), 'tests/e2e/fixtures');
+  const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
   generateAllFixtures(dir)
     .then((m) => {
       console.log(`Generated ${Object.keys(m.fixtures).length} fixtures in ${dir}`);

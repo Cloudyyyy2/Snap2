@@ -4,6 +4,7 @@ import {
   rgbToGrayscale,
   toGrayscale,
   grayscaleToRgba,
+  autoInvertIfDarkMode,
   applyMedianFilter3x3,
   medianFilter,
   applyGaussianBlur,
@@ -274,5 +275,35 @@ describe('src/lib/ocr/preprocess OCR image preprocessing utility', () => {
     expect(res.binary[40 * w + 50]).toBe(0);
     // Isolated speckle at (15, 15) should be suppressed or paper (255)
     expect(res.binary[15 * w + 15]).toBe(255);
+  });
+
+  it('autoInvertIfDarkMode keeps 38% shaded paper on 62% dark desk uninverted while inverting sparse dark-mode frames', () => {
+    const w = 200;
+    const h = 150;
+    // 1. Centered 38% shaded light paper (v=148..195) on 62% dark desk (v=35)
+    const shadedOnDesk = new Uint8ClampedArray(w * h).fill(35);
+    // ~0.616 * 0.616 = 0.3795 of pixels inside centered sheet
+    const x0 = 38;
+    const x1 = 161; // 124px
+    const y0 = 29;
+    const y1 = 120; // 92px -> 124*92 / 30000 = 38.03%
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        shadedOnDesk[y * w + x] = 148 + ((x + y) % 48); // 148..195
+      }
+    }
+    const deskRes = autoInvertIfDarkMode(shadedOnDesk, w, h);
+    expect(deskRes.inverted).toBe(false);
+
+    // 2. Sparse dark-mode UI (0.5% and 1.46% bright #f4f4f5 on #111318) -> inverted: true
+    for (const brightRatio of [0.005, 0.0146]) {
+      const darkFrame = new Uint8ClampedArray(w * h).fill(18);
+      const targetBright = Math.round(w * h * brightRatio);
+      for (let i = 0; i < targetBright; i++) {
+        darkFrame[i * 30 < w * h ? i * 30 : i] = 244;
+      }
+      const res = autoInvertIfDarkMode(darkFrame, w, h);
+      expect(res.inverted).toBe(true);
+    }
   });
 });

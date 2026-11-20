@@ -11,6 +11,8 @@ export {
   type DeskewResult,
   type PerspectiveWarpOptions,
   type PerspectiveResult,
+  type SlantOptions,
+  type SlantResult,
   type DeslantOptions,
   type DeslantResult,
   orderQuadCorners,
@@ -21,6 +23,10 @@ export {
   estimateSkewAngle,
   rotateGrayscale,
   deskewGrayscale,
+  estimateSlantAngle,
+  estimateCursiveSlantAngle,
+  shearDeslantGrayscale,
+  shearGrayscale,
   deslantGrayscale,
   correctDocumentPerspective,
 } from '../geometry';
@@ -190,38 +196,27 @@ export function removeRuledLines(
 
 
 
-/**
- * Filters out non-text background clutter (desks, room shadows, fingers, spiral bindings,
- * long dividers, and 1-2px speckles) from a Sauvola binary buffer (0 = ink, 255 = paper).
- */
-export function filterTextComponents(
+interface CleanupComp {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  cw: number;
+  ch: number;
+  area: number;
+  pixels: number[];
+  rejected: boolean;
+}
+
+function extractBinaryComponents(
   binary: Uint8ClampedArray,
   w: number,
   h: number
-): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(w * h);
-  out.fill(255);
-  if (w === 0 || h === 0) return out;
-
+): CleanupComp[] {
   const totalPixels = w * h;
   const visited = new Uint8Array(totalPixels);
   const queue: number[] = [];
-  const edgeMarginX = Math.max(2, Math.round(w * 0.004));
-  const edgeMarginY = Math.max(2, Math.round(h * 0.004));
-
-  interface KeptComp {
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-    cw: number;
-    ch: number;
-    area: number;
-    pixels: number[];
-    rejected: boolean;
-  }
-
-  const keptComps: KeptComp[] = [];
+  const comps: CleanupComp[] = [];
 
   for (let startIdx = 0; startIdx < totalPixels; startIdx++) {
     if (visited[startIdx] || binary[startIdx] !== 0) continue;
@@ -264,17 +259,355 @@ export function filterTextComponents(
       }
     }
 
-    const cw = maxX - minX + 1;
-    const ch = maxY - minY + 1;
-    const area = compPixels.length;
+    comps.push({
+      minX,
+      maxX,
+      minY,
+      maxY,
+      cw: maxX - minX + 1,
+      ch: maxY - minY + 1,
+      area: compPixels.length,
+      pixels: compPixels,
+      rejected: false,
+    });
+  }
+
+  return comps;
+}
+
+function rejectSpiralAndCornerInComps(
+  comps: CleanupComp[],
+  w: number,
+  h: number
+): void {
+  if (w < 160 || h < 120 || comps.length === 0) return;
+
+  // (a) Rounded/dark corner wedges and thin corner-touching border bars
+  for (const c of comps) {
+    if (c.rejected) continue;
+    const touchesH = c.minY <= 2 || c.maxY >= h - 3;
+    const touchesV = c.minX <= 2 || c.maxX >= w - 3;
+    const isCornerWedge =
+      touchesH &&
+      touchesV &&
+      c.cw <= w * 0.2 &&
+      c.ch <= h * 0.2 &&
+      (c.area / Math.max(1, c.cw * c.ch) >= 0.38 || c.area <= 300);
+    const isCornerBorderBar =
+      touchesH &&
+      touchesV &&
+      ((c.ch <= Math.max(6, Math.round(h * 0.02)) && c.cw <= w * 0.35) ||
+        (c.cw <= Math.max(6, Math.round(w * 0.025)) && c.ch <= h * 0.35));
+    if (isCornerWedge || isCornerBorderBar) {
+      c.rejected = true;
+    }
+  }
+
+  // (b) Left & Right spiral-binding coil holes and edge-touching margin stubs
+  const stripMarginSpiralCoils = (side: 'left' | 'right') => {
+    const candidates = comps.filter((c) => {
+      if (c.rejected) return false;
+      if (c.ch < 4 || c.cw > w * 0.14) return false;
+      const touchesExtreme = side === 'left' ? c.minX <= 2 : c.maxX >= w - 3;
+      const maxH = touchesExtreme ? h * 0.22 : h * 0.12;
+      if (c.ch > maxH) return false;
+
+      if (side === 'left') {
+        if (c.maxX >= w * 0.14) return false;
+        const hasRightNeighbor = comps.some(
+          (other) =>
+            other !== c &&
+            !other.rejected &&
+            other.minX > c.maxX &&
+            other.minX <= c.maxX + Math.max(10, Math.round(c.ch * 0.85)) &&
+            other.maxY >= c.minY - 4 &&
+            other.minY <= c.maxY + 4
+        );
+        return !hasRightNeighbor;
+      } else {
+        if (c.minX <= w * 0.86) return false;
+        const hasLeftNeighbor = comps.some(
+          (other) =>
+            other !== c &&
+            !other.rejected &&
+            other.maxX < c.minX &&
+            other.maxX >= c.minX - Math.max(10, Math.round(c.ch * 0.85)) &&
+            other.maxY >= c.minY - 4 &&
+            other.minY <= c.maxY + 4
+        );
+        return !hasLeftNeighbor;
+      }
+    });
+
+    if (candidates.length === 0) return;
+
+    const sorted = [...candidates].sort((a, b) => (a.minY + a.maxY) - (b.minY + b.maxY));
+
+    // Only treat as frame-edge spiral stubs when they truly touch/clip the outer border
+    const edgeTouching = sorted.filter((c) =>
+      side === 'left' ? c.minX <= 2 : c.maxX >= w - 3
+    );
+    if (edgeTouching.length >= 2) {
+      for (const c of edgeTouching) {
+        c.rejected = true;
+      }
+    }
+
+    const aligned = sorted.filter((c) => {
+      if (c.rejected) return false;
+      // Require coil/hole ring morphology (avoid stripping small '-' / '•' bullets or thin marks)
+      if (c.ch < 7 || c.cw < 5 || c.area < 30) return false;
+      return side === 'left'
+        ? c.minX <= w * 0.06 || c.maxX < w * 0.14
+        : c.maxX >= w * 0.94 || c.minX > w * 0.86;
+    });
+    if (aligned.length >= 3) {
+      const xCenters = aligned.map((c) => (c.minX + c.maxX) * 0.5).sort((a, b) => a - b);
+      const medianX = xCenters[Math.floor(xCenters.length * 0.5)];
+      const colAligned = aligned.filter(
+        (c) => Math.abs((c.minX + c.maxX) * 0.5 - medianX) <= Math.max(10, w * 0.045)
+      );
+
+      if (colAligned.length >= 3) {
+        // Distinguish real inset spiral coils from bulleted/numbered lists or aligned right prices:
+        // if >= 65% sit directly alongside same-row interior text, preserve them as list/price tokens.
+        const colSet = new Set(colAligned);
+        const alignedWithTextRows = colAligned.filter((c) =>
+          comps.some(
+            (other) =>
+              !other.rejected &&
+              !colSet.has(other) &&
+              other.area >= 12 &&
+              other.maxY >= c.minY - 4 &&
+              other.minY <= c.maxY + 4 &&
+              (side === 'left' ? other.minX > c.maxX + 6 : other.maxX < c.minX - 6)
+          )
+        ).length;
+        const mostlyTouchesOuterEdge =
+          colAligned.filter((c) => (side === 'left' ? c.minX <= 3 : c.maxX >= w - 4)).length >=
+          Math.ceil(colAligned.length * 0.6);
+
+        if (mostlyTouchesOuterEdge || alignedWithTextRows < colAligned.length * 0.65) {
+          const yCenters = colAligned.map((c) => (c.minY + c.maxY) * 0.5);
+          const gaps: number[] = [];
+          for (let i = 1; i < yCenters.length; i++) {
+            const g = yCenters[i] - yCenters[i - 1];
+            if (g >= 6) gaps.push(g);
+          }
+          if (gaps.length >= 2) {
+            const sortedGaps = [...gaps].sort((a, b) => a - b);
+            const medianGap = sortedGaps[Math.floor(sortedGaps.length * 0.5)];
+            const consistentGaps = gaps.filter(
+              (g) => Math.abs(g - medianGap) <= Math.max(4, medianGap * 0.42)
+            ).length;
+            if (consistentGaps >= Math.max(2, Math.floor(gaps.length * 0.6))) {
+              for (const c of colAligned) {
+                c.rejected = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+
+  stripMarginSpiralCoils('left');
+  stripMarginSpiralCoils('right');
+
+  // (c) Edge-clipped partial-column corner bleeds (e.g. clipped next-column words on right/left edge)
+  const chasm = Math.max(45, Math.round(w * 0.22));
+  const clusterGap = Math.max(14, Math.round(h * 0.05));
+
+  const stripEdgeClippedClusters = (side: 'left' | 'right') => {
+    const stripComps = comps.filter((c) => {
+      if (c.rejected) return false;
+      if (c.cw > w * 0.16 || c.ch > h * 0.16) return false;
+      return side === 'left' ? c.maxX <= w * 0.18 : c.minX >= w * 0.82;
+    });
+    if (stripComps.length === 0) return;
+
+    const visitedStrip = new Uint8Array(stripComps.length);
+    const qualifyingClusters: Array<{
+      cluster: CleanupComp[];
+      minY: number;
+      maxY: number;
+      hasRowInterior: boolean;
+    }> = [];
+
+    for (let i = 0; i < stripComps.length; i++) {
+      if (visitedStrip[i]) continue;
+      visitedStrip[i] = 1;
+      const cluster: CleanupComp[] = [stripComps[i]];
+      const queueIdx: number[] = [i];
+      let head = 0;
+
+      while (head < queueIdx.length) {
+        const cur = stripComps[queueIdx[head++]];
+        for (let j = 0; j < stripComps.length; j++) {
+          if (visitedStrip[j]) continue;
+          const other = stripComps[j];
+          const gapX = Math.max(0, cur.minX - other.maxX, other.minX - cur.maxX);
+          const gapY = Math.max(0, cur.minY - other.maxY, other.minY - cur.maxY);
+          if (gapX <= clusterGap && gapY <= clusterGap) {
+            visitedStrip[j] = 1;
+            queueIdx.push(j);
+            cluster.push(other);
+          }
+        }
+      }
+
+      let clMinX = w;
+      let clMaxX = -1;
+      let clMinY = h;
+      let clMaxY = -1;
+      let touchesBorder = false;
+
+      for (const c of cluster) {
+        if (c.minX < clMinX) clMinX = c.minX;
+        if (c.maxX > clMaxX) clMaxX = c.maxX;
+        if (c.minY < clMinY) clMinY = c.minY;
+        if (c.maxY > clMaxY) clMaxY = c.maxY;
+        // Require genuine outer frame-border clipping (within 2px of left/right frame edge)
+        if (side === 'left' ? c.minX <= 1 : c.maxX >= w - 2) {
+          touchesBorder = true;
+        }
+      }
+
+      const clW = clMaxX - clMinX + 1;
+      const clH = clMaxY - clMinY + 1;
+      if (!touchesBorder || clW > w * 0.16 || clH > h * 0.28) continue;
+
+      const clusterSet = new Set(cluster);
+      let hasCloseNeighbor = false;
+      let bandInteriorInk = 0;
+      let pageInteriorInk = 0;
+
+      for (const other of comps) {
+        if (other.rejected || clusterSet.has(other)) continue;
+        const inInterior = other.minX < w * 0.78 && other.maxX > w * 0.22;
+        if (inInterior) pageInteriorInk += other.area;
+
+        const overlapsBand = other.maxY >= clMinY - 6 && other.minY <= clMaxY + 6;
+        if (!overlapsBand) continue;
+
+        if (side === 'right') {
+          if (other.maxX >= clMinX - chasm && other.minX < clMinX) {
+            hasCloseNeighbor = true;
+            break;
+          }
+          if (other.maxX < clMinX - chasm) {
+            bandInteriorInk += other.area;
+          }
+        } else {
+          if (other.minX <= clMaxX + chasm && other.maxX > clMaxX) {
+            hasCloseNeighbor = true;
+            break;
+          }
+          if (other.minX > clMaxX + chasm) {
+            bandInteriorInk += other.area;
+          }
+        }
+      }
+
+      if (!hasCloseNeighbor && (bandInteriorInk >= 25 || pageInteriorInk >= 60)) {
+        qualifyingClusters.push({
+          cluster,
+          minY: clMinY,
+          maxY: clMaxY,
+          hasRowInterior: bandInteriorInk >= 25,
+        });
+      }
+    }
+
+    if (qualifyingClusters.length === 0) return;
+
+    // If multiple vertically separated row-aligned clusters appear across the page (e.g., right-aligned
+    // prices or a narrow right column), preserve them; only strip isolated corner/bleed clusters.
+    if (qualifyingClusters.length >= 2) {
+      const minYAll = Math.min(...qualifyingClusters.map((q) => q.minY));
+      const maxYAll = Math.max(...qualifyingClusters.map((q) => q.maxY));
+      const rowAlignedCount = qualifyingClusters.filter((q) => q.hasRowInterior).length;
+      if (rowAlignedCount >= 2 && maxYAll - minYAll >= h * 0.22) {
+        return;
+      }
+    }
+
+    for (const q of qualifyingClusters) {
+      for (const c of q.cluster) {
+        c.rejected = true;
+      }
+    }
+  };
+
+  stripEdgeClippedClusters('left');
+  stripEdgeClippedClusters('right');
+}
+
+/**
+ * Strips left/right margin spiral holes, rounded corner wedges, and edge-clipped
+ * partial-column corner bleeds from a binary buffer (0 = ink, 255 = paper) without
+ * disturbing interior text or prices. Safely no-ops on frames smaller than 160x120.
+ */
+export function stripSpiralAndCornerArtifacts(
+  binary: Uint8ClampedArray,
+  w: number,
+  h: number
+): Uint8ClampedArray {
+  if (w < 160 || h < 120 || binary.length < w * h) {
+    return new Uint8ClampedArray(binary);
+  }
+
+  const out = new Uint8ClampedArray(w * h).fill(255);
+  const comps = extractBinaryComponents(binary, w, h);
+  rejectSpiralAndCornerInComps(comps, w, h);
+
+  for (const comp of comps) {
+    if (comp.rejected) continue;
+    for (let i = 0; i < comp.pixels.length; i++) {
+      out[comp.pixels[i]] = 0;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Filters out non-text background clutter (desks, room shadows, fingers, spiral bindings,
+ * corner wedges, edge-clipped bleeds, long dividers, and 1-2px speckles) from a Sauvola
+ * binary buffer (0 = ink, 255 = paper).
+ */
+export function filterTextComponents(
+  binary: Uint8ClampedArray,
+  w: number,
+  h: number
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h);
+  out.fill(255);
+  if (w === 0 || h === 0) return out;
+
+  const totalPixels = w * h;
+  const edgeMarginX = Math.max(2, Math.round(w * 0.004));
+  const edgeMarginY = Math.max(2, Math.round(h * 0.004));
+
+  const allComps = extractBinaryComponents(binary, w, h);
+  const keptComps: CleanupComp[] = [];
+  const smallDotCandidates: CleanupComp[] = [];
+
+  for (const comp of allComps) {
+    const { minX, maxX, minY, maxY, cw, ch, area } = comp;
     const touchesEdge =
       minX <= edgeMarginX ||
       maxX >= w - 1 - edgeMarginX ||
       minY <= edgeMarginY ||
       maxY >= h - 1 - edgeMarginY;
 
-    // Reject tiny noise specks
-    if (area < 5 || (cw <= 2 && ch <= 2)) continue;
+    // Reject tiny noise specks, but defer 2x2 punctuation/period dots near glyphs
+    if (area < 4) continue;
+    if (area === 4 && cw <= 2 && ch <= 2) {
+      smallDotCandidates.push(comp);
+      continue;
+    }
+    if (cw <= 2 && ch <= 2) continue;
 
     // Reject massive solid blobs / desks / hands / shadows
     if (area > totalPixels * 0.025) continue;
@@ -295,107 +628,26 @@ export function filterTextComponents(
     if (cw > w * 0.65 && ch <= 5) continue;
     if (ch > h * 0.45 && cw <= 6) continue;
 
-    keptComps.push({
-      minX,
-      maxX,
-      minY,
-      maxY,
-      cw,
-      ch,
-      area,
-      pixels: compPixels,
-      rejected: false,
-    });
+    keptComps.push(comp);
   }
 
-  // Strip spiral-binding coils along left & right vertical margins
-  const stripMarginSpiralCoils = (side: 'left' | 'right') => {
-    const candidates = keptComps.filter((c) => {
-      if (c.rejected) return false;
-      if (c.ch < 4 || c.ch > h * 0.12 || c.cw > w * 0.12) return false;
-
-      if (side === 'left') {
-        if (c.maxX >= w * 0.14) return false;
-        // Verify no immediate horizontal text continuation to the right on the same row band
-        const hasRightNeighbor = keptComps.some(
-          (other) =>
-            other !== c &&
-            !other.rejected &&
-            other.minX > c.maxX &&
-            other.minX <= c.maxX + Math.max(10, Math.round(c.ch * 0.85)) &&
-            other.maxY >= c.minY - 4 &&
-            other.minY <= c.maxY + 4
-        );
-        return !hasRightNeighbor;
-      } else {
-        if (c.minX <= w * 0.86) return false;
-        const hasLeftNeighbor = keptComps.some(
-          (other) =>
-            other !== c &&
-            !other.rejected &&
-            other.maxX < c.minX &&
-            other.maxX >= c.minX - Math.max(10, Math.round(c.ch * 0.85)) &&
-            other.maxY >= c.minY - 4 &&
-            other.minY <= c.maxY + 4
-        );
-        return !hasLeftNeighbor;
-      }
-    });
-
-    if (candidates.length === 0) return;
-
-    // Group vertically sorted candidates that align along the margin strip
-    const sorted = [...candidates].sort((a, b) => (a.minY + a.maxY) - (b.minY + b.maxY));
-
-    // Check if edge-touching margin components exist (>= 2 touching extreme edge)
-    const edgeTouching = sorted.filter((c) =>
-      side === 'left' ? c.minX <= Math.max(edgeMarginX, Math.round(w * 0.015)) : c.maxX >= w - 1 - Math.max(edgeMarginX, Math.round(w * 0.015))
+  // Keep 2x2 period/punctuation dots that sit directly beside a real glyph component
+  for (const dot of smallDotCandidates) {
+    const nearGlyph = keptComps.some(
+      (g) =>
+        g.area >= 12 &&
+        g.ch >= 6 &&
+        dot.maxY >= g.minY - 3 &&
+        dot.minY <= g.maxY + 3 &&
+        dot.minX <= g.maxX + 6 &&
+        dot.maxX >= g.minX - 6
     );
-    if (edgeTouching.length >= 2) {
-      for (const c of edgeTouching) {
-        c.rejected = true;
-      }
+    if (nearGlyph) {
+      keptComps.push(dot);
     }
-
-    // Detect periodic repeating coils in vertical margin strip (x < 0.14*w or x > 0.86*w)
-    const aligned = sorted.filter((c) =>
-      side === 'left' ? c.minX <= w * 0.06 || c.maxX < w * 0.14 : c.maxX >= w * 0.94 || c.minX > w * 0.86
-    );
-    if (aligned.length >= 3) {
-      // Cluster by similar X-center so random words at varying indents don't trigger
-      const xCenters = aligned.map((c) => (c.minX + c.maxX) * 0.5).sort((a, b) => a - b);
-      const medianX = xCenters[Math.floor(xCenters.length * 0.5)];
-      const colAligned = aligned.filter(
-        (c) => Math.abs((c.minX + c.maxX) * 0.5 - medianX) <= Math.max(10, w * 0.045)
-      );
-
-      if (colAligned.length >= 3) {
-        const yCenters = colAligned.map((c) => (c.minY + c.maxY) * 0.5);
-        const gaps: number[] = [];
-        for (let i = 1; i < yCenters.length; i++) {
-          const g = yCenters[i] - yCenters[i - 1];
-          if (g >= 6) gaps.push(g);
-        }
-        if (gaps.length >= 2) {
-          const sortedGaps = [...gaps].sort((a, b) => a - b);
-          const medianGap = sortedGaps[Math.floor(sortedGaps.length * 0.5)];
-          const consistentGaps = gaps.filter(
-            (g) => Math.abs(g - medianGap) <= Math.max(4, medianGap * 0.42)
-          ).length;
-          if (consistentGaps >= Math.max(2, Math.floor(gaps.length * 0.6))) {
-            for (const c of colAligned) {
-              c.rejected = true;
-            }
-          }
-        }
-      }
-    }
-  };
-
-  if (w >= 160 && h >= 120) {
-    stripMarginSpiralCoils('left');
-    stripMarginSpiralCoils('right');
   }
+
+  rejectSpiralAndCornerInComps(keptComps, w, h);
 
   for (const comp of keptComps) {
     if (comp.rejected) continue;

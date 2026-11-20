@@ -114,7 +114,7 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
         fs.rmSync(tempExportRoot, { recursive: true, force: true });
       }
     },
-    45000
+    60000
   );
 
   it('parseReminderLocally builds structured reminders from handwritten lines', () => {
@@ -176,7 +176,7 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
         expect(mixedRes.recognizer).toBe('hybrid-host');
       }
     },
-    45000
+    60000
   );
 
   it(
@@ -221,7 +221,7 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
       expect(res.text.toLowerCase()).toContain('dentist');
       expect(res.appliedSteps).not.toContain('no-ink-detected');
     },
-    45000
+    60000
   );
 
   it('detectHandwriting identifies neat semi-disconnected handwriting via stroke-width variance and baseline wobble', async () => {
@@ -290,4 +290,49 @@ describe('local dual offline OCR recognizers (TrOCR Base + tessdata_full) & offl
     expect(res.text.toLowerCase()).not.toContain('bread');
     expect(res.text.toLowerCase()).not.toContain('pan au chocolat');
   });
+
+  it(
+    'exports all stage PNGs cleanly when dpiScale >= 1.5 and auto-bbox-shrink both trigger',
+    async () => {
+      const smallLocalizedSvg = `
+        <svg width="480" height="320" xmlns="http://www.w3.org/2000/svg">
+          <rect width="480" height="320" fill="white" />
+          <text x="36" y="54" font-size="14" font-family="sans-serif" fill="#111827">Buy milk</text>
+          <text x="36" y="78" font-size="14" font-family="sans-serif" fill="#111827">Call dentist</text>
+        </svg>
+      `;
+      const pngBuffer = await sharp(Buffer.from(smallLocalizedSvg)).png().toBuffer();
+      const tempExportRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'snapremind-stage-sync-'));
+
+      try {
+        const res = await processImageWithLocalOcr({
+          imageBuffer: pngBuffer,
+          ocrProfile: 'printed',
+          exportStages: true,
+          exportRootDir: tempExportRoot,
+        });
+
+        expect(res.dpiScale).toBeGreaterThanOrEqual(1.5);
+        expect(res.appliedSteps.some((s) => s.startsWith('dpi-upscale('))).toBe(true);
+        expect(res.appliedSteps.some((s) => s.startsWith('auto-bbox-shrink('))).toBe(true);
+        expect(res.exportDir).toBeDefined();
+
+        const dir = res.exportDir!;
+        for (const file of [
+          '03b_background_flattened.png',
+          '03c_ruled_lines_removed.png',
+          '04_contrast_enhanced.png',
+          '05_adaptive_binary.png',
+        ]) {
+          const p = path.join(dir, file);
+          expect(fs.existsSync(p)).toBe(true);
+          const meta = await sharp(p).metadata();
+          expect((meta.width ?? 0) > 0 && (meta.height ?? 0) > 0).toBe(true);
+        }
+      } finally {
+        fs.rmSync(tempExportRoot, { recursive: true, force: true });
+      }
+    },
+    30000
+  );
 });

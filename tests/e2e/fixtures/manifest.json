@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-18T19:50:51.011Z",
+  "fixtures": {
+    "real-grocery-note.png": {
+      "filename": "real-grocery-note.png",
+      "groundTruth": "bread\nmilk\ncrisps\neggs\npan au chocolat\nlunch for tomorrow\nsalmon\nasparagus\nbacon\nturkey\nspinach\nturkey mince\nsundried tomatoes\nbrowlli",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 14,
+      "tags": [
+        "real-world",
+        "cursive",
+        "spiral",
+        "grocery"
+      ],
+      "description": "User-uploaded 14-line handwritten grocery note with left spiral holes and top-right edge bleed"
+    },
+    "cursive-clean-2lines.png": {
+      "filename": "cursive-clean-2lines.png",
+      "groundTruth": "buy milk\ncall dentist",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 2,
+      "tags": [
+        "cursive",
+        "clean"
+      ],
+      "description": "Clean 2-line cursive note"
+    },
+    "cursive-long-line.png": {
+      "filename": "cursive-long-line.png",
+      "groundTruth": "Remember to bring passports tickets charger and laptop before nine",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "cursive",
+        "long-line"
+      ],
+      "description": "Long 10-word cursive line testing max_new_tokens 64 and splitWideLineBox"
+    },
+    "cursive-slanted-pos22.png": {
+      "filename": "cursive-slanted-pos22.png",
+      "groundTruth": "meeting tomorrow",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "cursive",
+        "slanted",
+        "pos22"
+      ],
+      "description": "Forward +22 deg slanted cursive text"
+    },
+    "cursive-slanted-neg18.png": {
+      "filename": "cursive-slanted-neg18.png",
+      "groundTruth": "finish report",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "cursive",
+        "slanted",
+        "neg18"
+      ],
+      "description": "Backward -18 deg slanted cursive text"
+    },
+    "cursive-slanted-pos35.png": {
+      "filename": "cursive-slanted-pos35.png",
+      "groundTruth": "morning coffee",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "cursive",
+        "slanted",
+        "pos35",
+        "boundary"
+      ],
+      "description": "Extreme +35 deg slanted cursive text"
+    },
+    "cursive-slanted-neg35.png": {
+      "filename": "cursive-slanted-neg35.png",
+      "groundTruth": "evening walk",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "cursive",
+        "slanted",
+        "neg35",
+        "boundary"
+      ],
+      "description": "Extreme -35 deg slanted cursive text"
+    },
+    "cursive-tight-descenders.png": {
+      "filename": "cursive-tight-descenders.png",
+      "groundTruth": "juggling playful\nflying gray quails\njumping quietly",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 3,
+      "tags": [
+        "cursive",
+        "ascenders",
+        "descenders"
+      ],
+      "description": "3 tightly spaced cursive lines rich in f,g,j,l,p,q,y ascenders/descenders"
+    },
+    "cursive-spiral-bleed.png": {
+      "filename": "cursive-spiral-bleed.png",
+      "groundTruth": "buy apples\ncall mom\npay rent",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 3,
+      "tags": [
+        "cursive",
+        "spiral",
+        "bleed"
+      ],
+      "description": "Notebook page with left spiral holes and top-right corner bleed plus 3 valid lines"
+    },
+    "cursive-wide-margin.png": {
+      "filename": "cursive-wide-margin.png",
+      "groundTruth": "buy fresh bread\ncall dentist",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 2,
+      "tags": [
+        "cursive",
+        "dpi-upscale",
+        "auto-bbox-shrink"
+      ],
+      "description": "Small-font note with large empty margin to trigger dpi-upscale and auto-bbox-shrink"
+    },
+    "cursive-confusions.png": {
+      "filename": "cursive-confusions.png",
+      "groundTruth": "morning milk\nwork date\nDr. Alice $45.50",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 3,
+      "tags": [
+        "cursive",
+        "confusions",
+        "proper-nouns",
+        "currency"
+      ],
+      "description": "Cursive confusion pairs with proper nouns and currency"
+    },
+    "cursive-anchors-grocery.png": {
+      "filename": "cursive-anchors-grocery.png",
+      "groundTruth": "tomorrow\ntomatoes\nturkey\nbroccoli\nsalmon\npan au chocolat",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 6,
+      "tags": [
+        "cursive",
+        "anchors",
+        "grocery"
+      ],
+      "description": "Grocery anchor words that must not be over-corrected"
+    },
+    "meeting-note-slanted.png": {
+      "filename": "meeting-note-slanted.png",
+      "groundTruth": "Meet Dr. Alice Bramwell on 5/12\nReview Q3 budget $450.00 at 3:30pm\nBring Sarah Patel notebook",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 3,
+      "tags": [
+        "scenario",
+        "slanted",
+        "ruled",
+        "proper-nouns"
+      ],
+      "description": "Slanted handwritten meeting note on ruled paper"
+    },
+    "printed-schedule.png": {
+      "filename": "printed-schedule.png",
+      "groundTruth": "Dentist Appointment\nTuesday 10:30am\nBring Insurance Card\nCopay $35.00",
+      "expectedStyle": "printed",
+      "expectedLineCount": 4,
+      "tags": [
+        "printed",
+        "schedule"
+      ],
+      "description": "Clean printed schedule note"
+    },
+    "printed-dark-mode.png": {
+      "filename": "printed-dark-mode.png",
+      "groundTruth": "Team Standup\nDaily 9:30am\nRoom 402",
+      "expectedStyle": "printed",
+      "expectedLineCount": 3,
+      "tags": [
+        "printed",
+        "dark-mode"
+      ],
+      "description": "Dark-mode printed screenshot with >5% bright pixels"
+    },
+    "printed-dark-mode-sparse.png": {
+      "filename": "printed-dark-mode-sparse.png",
+      "groundTruth": "Dark Note\nCheck Email",
+      "expectedStyle": "printed",
+      "expectedLineCount": 2,
+      "tags": [
+        "printed",
+        "dark-mode",
+        "sparse",
+        "boundary"
+      ],
+      "description": "Sparse dark-mode screenshot (~1.5% bright pixels boundary)"
+    },
+    "invoice-dark-mode.png": {
+      "filename": "invoice-dark-mode.png",
+      "groundTruth": "Electric Utility Invoice #8841\nAmount Due: $114.50\nDue Date: 12/15/2026 at 5:00pm\nPay online urgently",
+      "expectedStyle": "printed",
+      "expectedLineCount": 4,
+      "tags": [
+        "scenario",
+        "printed",
+        "dark-mode",
+        "invoice"
+      ],
+      "description": "Dark-mode printed electric utility invoice"
+    },
+    "mixed-printed-cursive.png": {
+      "filename": "mixed-printed-cursive.png",
+      "groundTruth": "WEEKLY ERRANDS\nPick up prescriptions at 2pm\nBuy fresh spinach and salmon",
+      "expectedStyle": "mixed",
+      "expectedLineCount": 3,
+      "tags": [
+        "scenario",
+        "mixed",
+        "printed",
+        "cursive"
+      ],
+      "description": "Mixed printed header and cursive handwritten body"
+    },
+    "reminder-full-flow.png": {
+      "filename": "reminder-full-flow.png",
+      "groundTruth": "Pay dentist Dr. Lee $85.00 tomorrow 3pm\nBring insurance card",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 2,
+      "tags": [
+        "scenario",
+        "reminder"
+      ],
+      "description": "Handwritten reminder note for full scan -> reminder save flow"
+    },
+    "checklist-confusions.png": {
+      "filename": "checklist-confusions.png",
+      "groundTruth": "morning\nmilk\ndate\nwork\nspinach\ndinner",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 6,
+      "tags": [
+        "scenario",
+        "cursive",
+        "checklist",
+        "confusions"
+      ],
+      "description": "6-line handwritten checklist with confusion-prone words"
+    },
+    "zero-margin-crop.png": {
+      "filename": "zero-margin-crop.png",
+      "groundTruth": "Buy Milk Today",
+      "expectedStyle": "printed",
+      "expectedLineCount": 1,
+      "tags": [
+        "boundary",
+        "zero-margin",
+        "dpi-upscale"
+      ],
+      "description": "Zero-margin tightly cropped small text"
+    },
+    "blank-white.png": {
+      "filename": "blank-white.png",
+      "groundTruth": "",
+      "expectedStyle": "blank",
+      "expectedLineCount": 0,
+      "tags": [
+        "boundary",
+        "blank"
+      ],
+      "description": "400x200 blank white image"
+    },
+    "solid-black.png": {
+      "filename": "solid-black.png",
+      "groundTruth": "",
+      "expectedStyle": "blank",
+      "expectedLineCount": 0,
+      "tags": [
+        "boundary",
+        "black"
+      ],
+      "description": "200x200 solid black image"
+    },
+    "tiny-1x1.png": {
+      "filename": "tiny-1x1.png",
+      "groundTruth": "",
+      "expectedStyle": "blank",
+      "expectedLineCount": 0,
+      "tags": [
+        "boundary",
+        "tiny"
+      ],
+      "description": "1x1 pixel PNG image"
+    },
+    "noisy-paper.png": {
+      "filename": "noisy-paper.png",
+      "groundTruth": "",
+      "expectedStyle": "noise",
+      "expectedLineCount": 0,
+      "tags": [
+        "boundary",
+        "noise",
+        "hallucination"
+      ],
+      "description": "Textured noisy paper without words"
+    },
+    "non-grocery-7lines.png": {
+      "filename": "non-grocery-7lines.png",
+      "groundTruth": "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\ngolf",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 7,
+      "tags": [
+        "cursive",
+        "non-grocery",
+        "no-mock"
+      ],
+      "description": "7-line non-grocery handwriting note verifying no hardcoded grocery fallback"
+    },
+    "printed-15lines.png": {
+      "filename": "printed-15lines.png",
+      "groundTruth": "Task 01 ready\nTask 02 ready\nTask 03 ready\nTask 04 ready\nTask 05 ready\nTask 06 ready\nTask 07 ready\nTask 08 ready\nTask 09 ready\nTask 10 ready\nTask 11 ready\nTask 12 ready\nTask 13 ready\nTask 14 ready\nTask 15 ready",
+      "expectedStyle": "printed",
+      "expectedLineCount": 15,
+      "tags": [
+        "printed",
+        "15lines",
+        "ui"
+      ],
+      "description": "15-line printed task list for UI scrolling line-confidence check"
+    },
+    "cursive-1line.png": {
+      "filename": "cursive-1line.png",
+      "groundTruth": "buy milk today",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "cursive",
+        "1line"
+      ],
+      "description": "Single-line cursive note"
+    },
+    "highres-3200x2400.png": {
+      "filename": "highres-3200x2400.png",
+      "groundTruth": "High Resolution Scan\nCheck Schedule 4pm",
+      "expectedStyle": "printed",
+      "expectedLineCount": 2,
+      "tags": [
+        "boundary",
+        "highres"
+      ],
+      "description": "High-resolution 3200x2400 PNG testing server downscale handling"
+    },
+    "single-word-milk.png": {
+      "filename": "single-word-milk.png",
+      "groundTruth": "milk",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "boundary",
+        "single-word"
+      ],
+      "description": "Single-word handwritten crop"
+    },
+    "single-char-7.png": {
+      "filename": "single-char-7.png",
+      "groundTruth": "7",
+      "expectedStyle": "handwriting",
+      "expectedLineCount": 1,
+      "tags": [
+        "boundary",
+        "single-char"
+      ],
+      "description": "Single-character handwritten crop"
+    }
+  }
+}

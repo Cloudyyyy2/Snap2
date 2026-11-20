@@ -261,12 +261,14 @@ export function autoInvertIfDarkMode(
   const step = Math.max(1, Math.floor((w * h) / 4096));
   let darkCount = 0;
   let brightCount = 0;
+  let midBrightCount = 0;
 
   for (let i = 0; i < gray.length; i += step) {
     const v = gray[i];
     samples.push(v);
     if (v < 85) darkCount++;
     if (v > 170) brightCount++;
+    if (v >= 135) midBrightCount++;
   }
 
   if (samples.length === 0) {
@@ -275,16 +277,18 @@ export function autoInvertIfDarkMode(
 
   samples.sort((a, b) => a - b);
   const median = samples[Math.floor(samples.length * 0.5)];
-  const p98 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.98))];
+  const p996 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.996))];
   const darkFraction = darkCount / samples.length;
   const brightFraction = brightCount / samples.length;
+  const midBrightFraction = midBrightCount / samples.length;
 
   const isDarkMode =
     median < 92 &&
-    p98 > 140 &&
+    p996 > 140 &&
     darkFraction >= 0.6 &&
     brightFraction >= 0.004 &&
-    brightFraction <= 0.3;
+    brightFraction <= 0.3 &&
+    midBrightFraction <= 0.3;
 
   if (!isDarkMode) {
     return { data: new Uint8ClampedArray(gray), inverted: false };

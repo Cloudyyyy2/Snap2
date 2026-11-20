@@ -3,24 +3,28 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /**
- * Normalizes whitespace while preserving casing, punctuation, and numbers.
+ * Normalizes Unicode (NFC), line breaks (\r\n or \r -> \n), and Unicode horizontal whitespace
+ * while preserving casing, punctuation, and numbers.
  */
 export function normalizeWhitespace(text: string): string {
   return text
-    .replace(/\r\n/g, '\n')
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
     .split('\n')
-    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .map((line) => line.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000 \t]+/g, ' ').trim())
     .filter((line) => line.length > 0)
     .join('\n')
     .trim();
 }
 
 /**
- * Computes Levenshtein edit distance between two strings (character-level).
+ * Computes Levenshtein edit distance between two strings (Unicode code-point level).
  */
 export function levenshteinDistance(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
+  const aChars = Array.from(a);
+  const bChars = Array.from(b);
+  const m = aChars.length;
+  const n = bChars.length;
   if (m === 0) return n;
   if (n === 0) return m;
 
@@ -30,9 +34,9 @@ export function levenshteinDistance(a: string, b: string): number {
 
   for (let i = 1; i <= m; i++) {
     curr[0] = i;
-    const ca = a.charCodeAt(i - 1);
+    const ca = aChars[i - 1];
     for (let j = 1; j <= n; j++) {
-      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;
+      const cost = ca === bChars[j - 1] ? 0 : 1;
       const del = prev[j] + 1;
       const ins = curr[j - 1] + 1;
       const sub = prev[j - 1] + cost;
@@ -61,10 +65,12 @@ export function computeCER(
     h = h.toLowerCase();
     r = r.toLowerCase();
   }
-  if (r.length === 0) {
-    return h.length === 0 ? 0 : 1;
+  const hChars = Array.from(h);
+  const rChars = Array.from(r);
+  if (rChars.length === 0) {
+    return hChars.length;
   }
-  return levenshteinDistance(h, r) / r.length;
+  return levenshteinDistance(h, r) / rChars.length;
 }
 
 /**

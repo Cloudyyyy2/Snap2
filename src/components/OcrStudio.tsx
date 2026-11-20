@@ -265,7 +265,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
     []
   );
 
-  const processImageWithAdaptiveThresholding = useCallback(async (dataUrl: string): Promise<string> => {
+  const normalizeImageForOcr = useCallback(async (dataUrl: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -280,7 +280,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             return;
           }
           ctx.drawImage(img, 0, 0);
-          const enhancedImageData = preprocessForOCR(canvas);
+          const enhancedImageData = preprocessForOCR(canvas, { mode: 'grayscale' });
 
           const outCanvas = document.createElement('canvas');
           outCanvas.width = enhancedImageData.width;
@@ -291,7 +291,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             return;
           }
           outCtx.putImageData(enhancedImageData, 0, 0);
-          resolve(outCanvas.toDataURL('image/jpeg', 0.94));
+          resolve(outCanvas.toDataURL('image/jpeg', 0.95));
         } catch (err) {
           console.warn('preprocessForOCR fallback:', err);
           resolve(dataUrl);
@@ -587,8 +587,8 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
         }
 
         // Vision AI path (explicitly requested via mode toggle or "Try Vision AI")
-        setStatusStep('Normalizing handwriting contrast with Gaussian adaptive thresholding...');
-        const enhancedImage = await processImageWithAdaptiveThresholding(image);
+        setStatusStep('Normalizing grayscale contrast...');
+        const enhancedImage = await normalizeImageForOcr(image);
         setProcessedImage(enhancedImage);
 
         setStatusStep('Reading handwritten text with Vision AI...');
@@ -657,7 +657,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
       offlineProfile,
       parseLocalTextToDraft,
       printedModelTier,
-      processImageWithAdaptiveThresholding,
+      normalizeImageForOcr,
       promptText,
       recordRecentScan,
     ]
@@ -818,7 +818,7 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
   const offlineStatusText =
     ocrMode === 'vision'
       ? visionConfigured
-        ? 'Vision AI · Cloud OCR (Gaussian preprocessed)'
+        ? 'Vision AI · Cloud OCR (Grayscale normalized)'
         : 'Vision AI selected (cloud key not configured)'
       : handwritingModelState === 'downloading'
         ? `Downloading TrOCR handwriting model${downloadProgress > 0 ? ` (${downloadProgress}%)` : '...'}`

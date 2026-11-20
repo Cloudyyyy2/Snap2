@@ -1,17 +1,25 @@
 /**
- * High-Performance Gaussian Adaptive Thresholding & Binarization Service (`src/services/imageProcessor.ts`)
- * Implements integral-image optimized sliding-window local intensity averaging, shadow removal,
- * and Gaussian adaptive thresholding to normalize handwriting contrast regardless of lighting conditions.
+ * Grayscale-Preserving OCR Normalization Service (`src/services/imageProcessor.ts`)
+ * Implements integral-image background illumination flattening and local contrast stretching
+ * to normalize handwriting and printed contrast while preserving continuous anti-aliased strokes (0..255).
+ * Optionally supports binary Sauvola output when `{ mode: 'binary' }` is explicitly requested.
  */
 
 import { PreprocessOptions, preprocessImageData } from '../lib/ocr/preprocess';
 
+export interface PreprocessForOcrOptions {
+  mode?: 'grayscale' | 'binary';
+}
+
 /**
- * High-performance Gaussian adaptive thresholding function for OCR flow.
- * Accepts an HTMLCanvasElement or ImageData, applies local intensity normalization,
- * removes background noise and shadows, and returns the binarized ImageData.
+ * Normalizes an HTMLCanvasElement or ImageData for OCR / Vision AI submission.
+ * Flattens uneven shadows and enhances ink contrast while preserving continuous anti-aliased
+ * grayscale strokes by default (`mode = 'grayscale'`), or returns Sauvola binary when `mode = 'binary'`.
  */
-export function preprocessForOCR(source: HTMLCanvasElement | ImageData | any): ImageData {
+export function preprocessForOCR(
+  source: HTMLCanvasElement | ImageData | any,
+  options: PreprocessForOcrOptions = {}
+): ImageData {
   if (!source || typeof source.width !== 'number' || typeof source.height !== 'number') {
     throw new Error('Valid HTMLCanvasElement or ImageData required for preprocessForOCR');
   }
@@ -39,7 +47,7 @@ export function preprocessForOCR(source: HTMLCanvasElement | ImageData | any): I
     throw new Error('Unsupported source type passed to preprocessForOCR');
   }
 
-  // Gaussian adaptive thresholding & local sliding-window intensity averaging configuration
+  // Background illumination flattening & contrast normalization (with optional Sauvola binary)
   const preOpts: PreprocessOptions = {
     profile: 'handwriting',
     binarize: 'sauvola',
@@ -51,11 +59,12 @@ export function preprocessForOCR(source: HTMLCanvasElement | ImageData | any): I
 
   const result = preprocessImageData({ data: rgbaData, width, height }, preOpts);
 
-  // Construct output ImageData with continuous anti-aliased grayscale strokes (0..255)
+  // Construct output ImageData with continuous anti-aliased grayscale strokes (0..255) by default
   const enhancedData = new Uint8ClampedArray(width * height * 4);
-  const grayBuffer = result.enhancedGray || result.gray;
-  for (let i = 0; i < grayBuffer.length; i++) {
-    const val = grayBuffer[i];
+  const outputBuffer =
+    options.mode === 'binary' ? result.binary : result.enhancedGray || result.gray;
+  for (let i = 0; i < outputBuffer.length; i++) {
+    const val = outputBuffer[i];
     const idx = i * 4;
     enhancedData[idx] = val;
     enhancedData[idx + 1] = val;

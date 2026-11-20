@@ -107,15 +107,16 @@ export interface InterceptedRequest {
 }
 
 export interface DomHarnessHandle {
-  resetPage: (baseUrl: string) => Promise<void>;
+  setAbortSignal: (signal?: AbortSignal) => void;
+  resetPage: (baseUrl: string, signal?: AbortSignal) => Promise<void>;
   getUrl: () => Promise<string>;
   getPageText: () => Promise<string>;
   listButtons: () => Promise<Array<{ text: string; disabled: boolean; ariaLabel: string | null; className: string }>>;
   hasModeButton: (pattern: RegExp) => Promise<boolean>;
   clickModeButton: (pattern: RegExp) => Promise<string>;
   uploadFixture: (fixturePath: string) => Promise<void>;
-  waitForScanComplete: (timeoutMs?: number) => Promise<void>;
-  waitForReviewSheet: (timeoutMs?: number) => Promise<void>;
+  waitForScanComplete: (timeoutMs?: number, signal?: AbortSignal) => Promise<void>;
+  waitForReviewSheet: (timeoutMs?: number, signal?: AbortSignal) => Promise<void>;
   getEditableText: () => Promise<string>;
   setEditableText: (value: string) => Promise<void>;
   getAccuracyBadge: () => Promise<{ found: boolean; rawText: string; percent: number | null }>;
@@ -123,8 +124,8 @@ export interface DomHarnessHandle {
   getLineConfidences: () => Promise<Array<{ text: string; confidencePct: number | null; raw: string }>>;
   clickCopyText: () => Promise<{ clicked: boolean; buttonText: string; feedbackText: string }>;
   readClipboardText: () => Promise<string>;
-  clickConvertToReminder: (timeoutMs?: number) => Promise<void>;
-  clickSaveReminder: (timeoutMs?: number) => Promise<void>;
+  clickConvertToReminder: (timeoutMs?: number, signal?: AbortSignal) => Promise<void>;
+  clickSaveReminder: (timeoutMs?: number, signal?: AbortSignal) => Promise<void>;
   getStoredReminders: () => Promise<Array<Record<string, unknown>>>;
   getVisibleErrorBanner: () => Promise<string | null>;
   enableNetworkCapture: (options?: { failLocalOcrWithStatus?: number }) => Promise<void>;
@@ -137,6 +138,7 @@ export interface TestContext {
   repoRoot: string;
   fixturesDir: string;
   manifest: Manifest;
+  signal: AbortSignal;
   getServer: () => Promise<ServerHandle>;
   spawnSecondaryServer: (envOverrides: Record<string, string>) => Promise<ServerHandle>;
   getDom: () => Promise<DomHarnessHandle>;

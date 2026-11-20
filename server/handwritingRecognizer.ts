@@ -291,7 +291,14 @@ async function saveGrayscalePng(
   width: number,
   height: number
 ): Promise<void> {
-  await sharp(Buffer.from(gray), {
+  const expectedLen = width * height;
+  if (!gray || width <= 0 || height <= 0 || gray.length < expectedLen) {
+    throw new Error(
+      `Invalid grayscale buffer for ${path.basename(filePath)}: got ${gray?.length ?? 0} bytes for ${width}x${height}`
+    );
+  }
+  const slice = gray.length === expectedLen ? gray : gray.subarray(0, expectedLen);
+  await sharp(Buffer.from(slice), {
     raw: { width, height, channels: 1 },
   })
     .png()

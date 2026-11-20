@@ -10,11 +10,20 @@ import {
   estimateSkewAngle,
   rotateGrayscale,
   deskewGrayscale,
+  estimateSlantAngle,
   estimateCursiveSlantAngle,
+  shearDeslantGrayscale,
   shearGrayscale,
   deslantGrayscale,
+  type SlantOptions,
+  type SlantResult,
   type QuadCorners,
 } from '../../src/lib/ocr/geometry';
+import {
+  estimateSlantAngle as cleanupEstimateSlantAngle,
+  shearDeslantGrayscale as cleanupShearDeslantGrayscale,
+  deslantGrayscale as cleanupDeslantGrayscale,
+} from '../../src/lib/ocr/handwriting/cleanup';
 
 function renderTiltedTextLines(
   w: number,
@@ -363,5 +372,161 @@ describe('geometric & spatial correction (deskewing & perspective dewarping)', (
     expect(Math.abs(estimatedNeg - -18)).toBeLessThanOrEqual(1.5);
     const deslantedNeg = deslantGrayscale(slantedNeg, slantedNeg, w, h);
     expect(deslantedNeg.deslanted).toBe(true);
+  });
+
+  it('F4 contract: handles strong ±34° slants, cleanup.ts re-exports, zero edge clipping at x=0/x=w-1, upright printed text, and degenerate buffers', () => {
+    // 1. Contract & re-export identity checks
+    expect(cleanupEstimateSlantAngle).toBe(estimateSlantAngle);
+    expect(cleanupShearDeslantGrayscale).toBe(shearDeslantGrayscale);
+    expect(cleanupDeslantGrayscale).toBe(deslantGrayscale);
+    expect(estimateCursiveSlantAngle).toBe(estimateSlantAngle);
+    expect(shearGrayscale).toBe(shearDeslantGrayscale);
+
+    const w = 260;
+    const h = 72;
+    const renderStems = (angleDeg: number, stemXs: number[]): Uint8ClampedArray => {
+      const buf = new Uint8ClampedArray(w * h).fill(255);
+      const tan = Math.tan((angleDeg * Math.PI) / 180);
+      const cy = (h - 1) * 0.5;
+      for (const sx of stemXs) {
+        for (let y = 10; y <= h - 11; y++) {
+          const xCenter = sx - tan * (y - cy);
+          for (let dx = -1; dx <= 1; dx++) {
+            const px = Math.round(xCenter + dx);
+            if (px >= 0 && px < w) {
+              buf[y * w + px] = 0;
+            }
+          }
+        }
+      }
+      return buf;
+    };
+
+    // 2. Strong forward (+34°) and backward (-32°) slants within ±40° range
+    const opts: SlantOptions = { minAngleDeg: -40, maxAngleDeg: 40, coarseStepDeg: 2, fineStepDeg: 0.5 };
+    const slanted34 = renderStems(34, [60, 90, 120, 150, 180, 210]);
+    const est34 = estimateSlantAngle(slanted34, w, h, opts);
+    expect(Math.abs(est34 - 34)).toBeLessThanOrEqual(1.5);
+    const res34: SlantResult = deslantGrayscale(slanted34, slanted34, w, h, opts);
+    expect(res34.applied).toBe(true);
+    expect(res34.shearX).toBeGreaterThan(0.5);
+    expect(res34.width).toBeGreaterThanOrEqual(w + Math.ceil(h * Math.abs(Math.tan((est34 * Math.PI) / 180))));
+
+    const slantedNeg32 = renderStems(-32, [60, 90, 120, 150, 180, 210]);
+    const estNeg32 = estimateSlantAngle(slantedNeg32, w, h, opts);
+    expect(Math.abs(estNeg32 - -32)).toBeLessThanOrEqual(1.5);
+    const resNeg32 = deslantGrayscale(slantedNeg32, slantedNeg32, w, h, opts);
+    expect(resNeg32.applied).toBe(true);
+    expect(resNeg32.shearX).toBeLessThan(-0.5);
+
+    // 3. Edge-near characters touching x = 0 and x = w - 1 never clip at +30° or -30°
+    const edgeW = 120;
+    const edgeH = 60;
+    for (const angle of [30, -30]) {
+      const edgeImg = new Uint8ClampedArray(edgeW * edgeH).fill(255);
+      // Draw vertical bars directly on leftmost (x=0..1) and rightmost (x=edgeW-2..edgeW-1) columns
+      for (let y = 8; y < edgeH - 8; y++) {
+        edgeImg[y * edgeW + 0] = 0;
+        edgeImg[y * edgeW + 1] = 0;
+        edgeImg[y * edgeW + (edgeW - 2)] = 0;
+        edgeImg[y * edgeW + (edgeW - 1)] = 0;
+      }
+      const origInk = 2 * 2 * (edgeH - 16);
+      const sheared = shearDeslantGrayscale(edgeImg, edgeW, edgeH, angle, 240);
+      const minExpectedW = edgeW + Math.ceil(edgeH * Math.abs(Math.tan((angle * Math.PI) / 180)));
+      expect(sheared.width).toBeGreaterThanOrEqual(minExpectedW);
+      expect(sheared.height).toBe(edgeH);
+      // Corners filled with custom backgroundFill (240)
+      expect(sheared.data[0]).toBe(240);
+      expect(sheared.data[sheared.width - 1]).toBe(240);
+
+      let darkInk = 0;
+      for (let i = 0; i < sheared.data.length; i++) {
+        if (sheared.data[i] < 120) darkInk++;
+      }
+      expect(darkInk).toBeGreaterThanOrEqual(origInk - 4);
+    }
+
+    // 4. Upright printed letters + horizontal rule bars remain completely untouched
+    const printed = renderStems(0, [40, 70, 100, 130, 160, 190]);
+    for (let x = 35; x <= 195; x++) {
+      printed[35 * w + x] = 0; // horizontal crossbar
+      printed[36 * w + x] = 0;
+    }
+    expect(estimateSlantAngle(printed, w, h)).toBe(0);
+    const resPrinted = deslantGrayscale(printed, printed, w, h);
+    expect(resPrinted.applied).toBe(false);
+    expect(resPrinted.shearX).toBe(0);
+    expect(resPrinted.width).toBe(w);
+    expect(resPrinted.data).toEqual(printed);
+
+    // 5. Empty, all-white, all-black, and tiny (< 8x8) inputs are safe
+    expect(estimateSlantAngle(new Uint8ClampedArray(0), 0, 0)).toBe(0);
+    expect(estimateSlantAngle(new Uint8ClampedArray(4 * 4).fill(0), 4, 4)).toBe(0);
+    expect(estimateSlantAngle(new Uint8ClampedArray(80 * 40).fill(255), 80, 40)).toBe(0);
+    expect(estimateSlantAngle(new Uint8ClampedArray(80 * 40).fill(0), 80, 40)).toBe(0);
+
+    const tinyRes = deslantGrayscale(new Uint8ClampedArray(5 * 5).fill(120), 5, 5);
+    expect(tinyRes.applied).toBe(false);
+    expect(tinyRes.shearX).toBe(0);
+    expect(tinyRes.width).toBe(5);
+    expect(tinyRes.height).toBe(5);
+  });
+
+  it('estimateSlantAngle, shearDeslantGrayscale, and deslantGrayscale safely handle NaN, Infinity, ±90°, and NaN backgroundFill', () => {
+    const w = 40;
+    const h = 30;
+    const buf = new Uint8ClampedArray(w * h).fill(255);
+    for (let y = 4; y < h - 4; y++) {
+      buf[y * w + 15] = 0;
+      buf[y * w + 16] = 0;
+      buf[y * w + 25] = 0;
+      buf[y * w + 26] = 0;
+    }
+
+    // 1. shearDeslantGrayscale with NaN / Infinity returns a clean copy with finite dims
+    for (const badAngle of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const res = shearDeslantGrayscale(buf, w, h, badAngle);
+      expect(Number.isFinite(res.width)).toBe(true);
+      expect(res.width).toBe(w);
+      expect(res.height).toBe(h);
+      expect(res.data.length).toBe(w * h);
+      expect(res.data).toEqual(buf);
+    }
+
+    // 2. shearDeslantGrayscale with ±90° clamps safely instead of throwing RangeError
+    for (const extremeAngle of [90, -90, 89.99, -89.99]) {
+      const res = shearDeslantGrayscale(buf, w, h, extremeAngle);
+      expect(Number.isFinite(res.width)).toBe(true);
+      expect(res.width).toBeGreaterThanOrEqual(w);
+      expect(res.height).toBe(h);
+      expect(res.data.length).toBe(res.width * h);
+    }
+
+    // 3. shearDeslantGrayscale with backgroundFill = NaN falls back to 255 (white)
+    const nanBgRes = shearDeslantGrayscale(buf, w, h, 20, Number.NaN);
+    expect(nanBgRes.data[0]).toBe(255);
+    expect(nanBgRes.data[nanBgRes.width - 1]).toBe(255);
+
+    // 4. estimateSlantAngle with ±90° bounds or NaN/Infinity options does not throw
+    expect(() =>
+      estimateSlantAngle(buf, w, h, { minAngleDeg: -90, maxAngleDeg: 90 })
+    ).not.toThrow();
+    expect(
+      Number.isFinite(
+        estimateSlantAngle(buf, w, h, {
+          minAngleDeg: Number.NaN,
+          maxAngleDeg: Number.POSITIVE_INFINITY,
+          coarseStepDeg: Number.NaN,
+          fineStepDeg: Number.NEGATIVE_INFINITY,
+        })
+      )
+    ).toBe(true);
+
+    // 5. deslantGrayscale with NaN/Infinity dims returns safe empty result
+    const nanDims = deslantGrayscale(buf, Number.NaN, h);
+    expect(nanDims.applied).toBe(false);
+    expect(nanDims.width).toBe(0);
+    expect(nanDims.data.length).toBe(0);
   });
 });

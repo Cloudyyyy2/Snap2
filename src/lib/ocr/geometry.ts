@@ -827,58 +827,122 @@ export function correctDocumentPerspective(
   };
 }
 
-export interface DeslantOptions {
-  maxSlantDeg?: number;
-  stepDeg?: number;
+export interface SlantOptions {
+  minAngleDeg?: number;
+  maxAngleDeg?: number;
+  coarseStepDeg?: number;
+  fineStepDeg?: number;
   minCorrectionDeg?: number;
+  /** Legacy alias for symmetric [-maxSlantDeg, +maxSlantDeg] bounds */
+  maxSlantDeg?: number;
+  /** Legacy single-pass step override */
+  stepDeg?: number;
+  /** Ink threshold when estimating from grayscale or binary (0-255). Default: 175 */
   inkThreshold?: number;
+  /** Pixel fill intensity (0-255) for exposed margins after shear. Default: 255 */
   backgroundFill?: number;
 }
 
-export interface DeslantResult {
+export type DeslantOptions = SlantOptions;
+
+export interface SlantResult {
+  angleDeg: number;
+  shearX: number;
+  applied: boolean;
   data: Uint8ClampedArray;
   width: number;
   height: number;
+  /** Backward-compatible aliases */
   slantDeg: number;
   corrected: boolean;
-  angleDeg: number;
   deslanted: boolean;
 }
 
+export type DeslantResult = SlantResult;
+
 /**
- * Estimates cursive/handwritten slant angle (-maxSlant to +maxSlant degrees)
+ * Estimates cursive/handwritten slant angle (-40° to +40° by default)
  * by maximizing vertical column ink projection energy under horizontal shear.
  */
-export function estimateCursiveSlantAngle(
-  gray: Uint8ClampedArray,
-  w: number,
-  h: number,
-  options: DeslantOptions = {}
+export function estimateSlantAngle(
+  binary: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options: SlantOptions = {}
 ): number {
-  if (w < 8 || h < 8) return 0;
-
-  const maxSlant = options.maxSlantDeg ?? 25;
-  const stepDeg = options.stepDeg ?? 2.5;
-  const inkThreshold = options.inkThreshold ?? 175;
-
-  const inkX: number[] = [];
-  const inkY: number[] = [];
-  const cy = (h - 1) * 0.5;
-
-  for (let y = 0; y < h; y++) {
-    const rowOff = y * w;
-    for (let x = 0; x < w; x++) {
-      if (gray[rowOff + x] < inkThreshold) {
-        inkX.push(x);
-        inkY.push(y - cy);
-      }
-    }
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < 8 ||
+    height < 8 ||
+    binary.length < width * height
+  ) {
+    return 0;
   }
 
+  const rawMaxSlant =
+    options.maxSlantDeg !== undefined && Number.isFinite(options.maxSlantDeg)
+      ? options.maxSlantDeg
+      : 40;
+  const maxLimit = Math.max(1, Math.min(60, rawMaxSlant));
+  const rawMin =
+    options.minAngleDeg !== undefined && Number.isFinite(options.minAngleDeg)
+      ? options.minAngleDeg
+      : -maxLimit;
+  const rawMax =
+    options.maxAngleDeg !== undefined && Number.isFinite(options.maxAngleDeg)
+      ? options.maxAngleDeg
+      : maxLimit;
+  const clampedMin = Math.max(-60, Math.min(60, rawMin));
+  const clampedMax = Math.max(-60, Math.min(60, rawMax));
+  const minAngle = Math.min(clampedMin, clampedMax);
+  const maxAngle = Math.max(clampedMin, clampedMax);
+  const hasSingleStep = options.stepDeg !== undefined && Number.isFinite(options.stepDeg);
+  const rawCoarse = hasSingleStep
+    ? (options.stepDeg as number)
+    : options.coarseStepDeg !== undefined && Number.isFinite(options.coarseStepDeg)
+      ? options.coarseStepDeg
+      : 2;
+  const coarseStep = Math.max(0.25, rawCoarse);
+  const rawFine =
+    options.fineStepDeg !== undefined && Number.isFinite(options.fineStepDeg)
+      ? options.fineStepDeg
+      : 0.5;
+  const fineStep = Math.max(0.1, rawFine);
+  const inkThreshold =
+    options.inkThreshold !== undefined && Number.isFinite(options.inkThreshold)
+      ? options.inkThreshold
+      : 175;
+
+  const cy = (height - 1) * 0.5;
+  const totalPx = width * height;
+  let step = totalPx > 400_000 ? 3 : totalPx > 120_000 ? 2 : 1;
+
+  const collectForeground = (sampleStep: number): { inkX: number[]; inkY: number[] } => {
+    const inkX: number[] = [];
+    const inkY: number[] = [];
+    for (let y = 0; y < height; y += sampleStep) {
+      const rowOff = y * width;
+      for (let x = 0; x < width; x += sampleStep) {
+        if (binary[rowOff + x] < inkThreshold) {
+          inkX.push(x);
+          inkY.push(y - cy);
+        }
+      }
+    }
+    return { inkX, inkY };
+  };
+
+  let { inkX, inkY } = collectForeground(step);
+  if (step > 1 && inkX.length < 30) {
+    step = 1;
+    ({ inkX, inkY } = collectForeground(1));
+  }
   if (inkX.length < 20) return 0;
 
-  const maxExtraW = Math.ceil(Math.tan((maxSlant * Math.PI) / 180) * h);
-  const binW = w + maxExtraW * 2 + 4;
+  const maxAbsAngle = Math.max(Math.abs(minAngle), Math.abs(maxAngle));
+  const maxExtraW = Math.ceil(Math.tan((maxAbsAngle * Math.PI) / 180) * height);
+  const binW = width + maxExtraW * 2 + 4;
   const colCounts = new Int32Array(binW);
 
   const scoreSlant = (deg: number): number => {
@@ -899,11 +963,12 @@ export function estimateCursiveSlantAngle(
   };
 
   const zeroEnergy = scoreSlant(0);
+  if (zeroEnergy === 0) return 0;
   let bestDeg = 0;
   let bestEnergy = zeroEnergy;
 
-  if (options.stepDeg !== undefined) {
-    for (let deg = -maxSlant; deg <= maxSlant + 1e-6; deg += stepDeg) {
+  if (hasSingleStep) {
+    for (let deg = minAngle; deg <= maxAngle + 1e-6; deg += coarseStep) {
       const energy = scoreSlant(deg);
       if (energy > bestEnergy) {
         bestEnergy = energy;
@@ -913,9 +978,8 @@ export function estimateCursiveSlantAngle(
   } else {
     let coarseBestDeg = 0;
     let coarseBestEnergy = zeroEnergy;
-    const coarseLimit = Math.floor(maxSlant / 8) * 8;
-    for (let deg = -coarseLimit; deg <= coarseLimit; deg += 8) {
-      if (deg === 0) continue;
+    for (let deg = minAngle; deg <= maxAngle + 1e-6; deg += coarseStep) {
+      if (Math.abs(deg) < 1e-6) continue;
       const energy = scoreSlant(deg);
       if (energy > coarseBestEnergy) {
         coarseBestEnergy = energy;
@@ -925,10 +989,10 @@ export function estimateCursiveSlantAngle(
 
     bestDeg = coarseBestDeg;
     bestEnergy = coarseBestEnergy;
-    const fineStart = Math.max(-maxSlant, coarseBestDeg - 4);
-    const fineEnd = Math.min(maxSlant, coarseBestDeg + 4);
-    for (let deg = fineStart; deg <= fineEnd + 1e-6; deg += 1) {
-      if (deg === coarseBestDeg || deg === 0) continue;
+    const fineStart = Math.max(minAngle, coarseBestDeg - coarseStep);
+    const fineEnd = Math.min(maxAngle, coarseBestDeg + coarseStep);
+    for (let deg = fineStart; deg <= fineEnd + 1e-6; deg += fineStep) {
+      if (Math.abs(deg) < 1e-6) continue;
       const energy = scoreSlant(deg);
       if (energy > bestEnergy) {
         bestEnergy = energy;
@@ -938,111 +1002,175 @@ export function estimateCursiveSlantAngle(
   }
 
   if (bestEnergy <= zeroEnergy * 1.05) return 0;
-  return Number(bestDeg.toFixed(1));
+  return Number(bestDeg.toFixed(2));
 }
 
+export const estimateCursiveSlantAngle = estimateSlantAngle;
+
 /**
- * Applies horizontal bilinear shear transformation without clipping characters,
- * dynamically expanding output width to accommodate the sheared strokes.
+ * Applies horizontal bilinear shear deslanting without clipping characters,
+ * dynamically expanding output width to accommodate sheared edge strokes.
  */
-export function shearGrayscale(
+export function shearDeslantGrayscale(
   gray: Uint8ClampedArray,
-  w: number,
-  h: number,
+  width: number,
+  height: number,
   angleDeg: number,
   backgroundFill = 255
 ): { data: Uint8ClampedArray; width: number; height: number } {
-  const cy = (h - 1) * 0.5;
-  const k = Math.tan((angleDeg * Math.PI) / 180);
-  const padX = Math.ceil(Math.abs(k) * (h * 0.5)) + 2;
-  const outW = w + padX * 2;
-  const out = new Uint8ClampedArray(outW * h).fill(backgroundFill);
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    gray.length < width * height
+  ) {
+    return {
+      data: new Uint8ClampedArray(0),
+      width: 0,
+      height: 0,
+    };
+  }
 
-  for (let y = 0; y < h; y++) {
+  if (!Number.isFinite(angleDeg) || Math.abs(angleDeg) < 0.05) {
+    return {
+      data: new Uint8ClampedArray(gray.subarray(0, width * height)),
+      width,
+      height,
+    };
+  }
+
+  const safeAngle = Math.max(-60, Math.min(60, angleDeg));
+  const safeBgFill = Number.isFinite(backgroundFill)
+    ? Math.max(0, Math.min(255, Math.round(backgroundFill)))
+    : 255;
+
+  const cy = (height - 1) * 0.5;
+  const k = Math.tan((safeAngle * Math.PI) / 180);
+  const padX = Math.ceil(Math.abs(k) * (height * 0.5)) + 2;
+  const outW = width + padX * 2;
+  const out = new Uint8ClampedArray(outW * height).fill(safeBgFill);
+
+  for (let y = 0; y < height; y++) {
     const dy = y - cy;
     const dstOff = y * outW;
-    const row0 = y * w;
+    const row0 = y * width;
     for (let dx = 0; dx < outW; dx++) {
       const sx = dx - padX - k * dy;
       const x0 = Math.floor(sx);
-      if (x0 < 0 || x0 >= w - 1) continue;
+      if (x0 < -1 || x0 >= width) continue;
       const fx = sx - x0;
-      const v0 = gray[row0 + x0];
-      const v1 = gray[row0 + x0 + 1];
+      const v0 = x0 >= 0 ? gray[row0 + x0] : safeBgFill;
+      const v1 = x0 + 1 < width ? gray[row0 + x0 + 1] : safeBgFill;
       out[dstOff + dx] = Math.round(v0 + (v1 - v0) * fx);
     }
   }
 
-  return { data: out, width: outW, height: h };
+  return { data: out, width: outW, height };
 }
 
+export const shearGrayscale = shearDeslantGrayscale;
+
 /**
- * Estimates cursive/handwritten slant angle (-25° to +25°) by maximizing vertical
+ * Estimates cursive/handwritten slant angle (-40° to +40°) by maximizing vertical
  * column ink concentration under horizontal shear, then applies bilinear shear
- * deslanting so upright stems align vertically for TrOCR recognition.
+ * deslanting so upright stems align vertically for OCR recognition.
  */
 export function deslantGrayscale(
   gray: Uint8ClampedArray,
   w: number,
   h: number,
-  options?: DeslantOptions
-): DeslantResult;
+  options?: SlantOptions
+): SlantResult;
 export function deslantGrayscale(
   gray: Uint8ClampedArray,
   binary: Uint8ClampedArray,
   w: number,
   h: number,
-  options?: DeslantOptions
-): DeslantResult;
+  options?: SlantOptions
+): SlantResult;
 export function deslantGrayscale(
   gray: Uint8ClampedArray,
   wOrBinary: number | Uint8ClampedArray,
   hOrW: number,
-  optionsOrH: DeslantOptions | number = {},
-  maybeOptions: DeslantOptions = {}
-): DeslantResult {
+  optionsOrH: SlantOptions | number = {},
+  maybeOptions: SlantOptions = {}
+): SlantResult {
   const hasBinaryArg = wOrBinary instanceof Uint8ClampedArray;
   const estimateBuf = hasBinaryArg ? wOrBinary : gray;
   const w = hasBinaryArg ? hOrW : wOrBinary;
   const h = hasBinaryArg ? (optionsOrH as number) : hOrW;
-  const options = hasBinaryArg ? maybeOptions : (optionsOrH as DeslantOptions);
+  const options = hasBinaryArg ? maybeOptions : (optionsOrH as SlantOptions);
+
+  if (
+    !Number.isFinite(w) ||
+    !Number.isFinite(h) ||
+    w <= 0 ||
+    h <= 0 ||
+    gray.length < w * h
+  ) {
+    return {
+      angleDeg: 0,
+      shearX: 0,
+      applied: false,
+      data: new Uint8ClampedArray(0),
+      width: 0,
+      height: 0,
+      slantDeg: 0,
+      corrected: false,
+      deslanted: false,
+    };
+  }
 
   if (w < 8 || h < 8) {
     return {
-      data: new Uint8ClampedArray(gray),
+      angleDeg: 0,
+      shearX: 0,
+      applied: false,
+      data: new Uint8ClampedArray(gray.subarray(0, w * h)),
       width: w,
       height: h,
       slantDeg: 0,
       corrected: false,
-      angleDeg: 0,
       deslanted: false,
     };
   }
 
-  const minCorrection = options.minCorrectionDeg ?? 3.0;
-  const fill = options.backgroundFill ?? 255;
-  const bestDeg = estimateCursiveSlantAngle(estimateBuf, w, h, options);
+  const minCorrection =
+    options.minCorrectionDeg !== undefined && Number.isFinite(options.minCorrectionDeg)
+      ? Math.max(0, options.minCorrectionDeg)
+      : 3.0;
+  const fill =
+    options.backgroundFill !== undefined && Number.isFinite(options.backgroundFill)
+      ? Math.max(0, Math.min(255, Math.round(options.backgroundFill)))
+      : 255;
+  const bestDeg = estimateSlantAngle(estimateBuf, w, h, options);
 
   if (Math.abs(bestDeg) < minCorrection) {
     return {
-      data: new Uint8ClampedArray(gray),
+      angleDeg: 0,
+      shearX: 0,
+      applied: false,
+      data: new Uint8ClampedArray(gray.subarray(0, w * h)),
       width: w,
       height: h,
       slantDeg: 0,
       corrected: false,
-      angleDeg: 0,
       deslanted: false,
     };
   }
 
-  const sheared = shearGrayscale(gray, w, h, bestDeg, fill);
+  const sheared = shearDeslantGrayscale(gray, w, h, bestDeg, fill);
+  const shearX = Number(Math.tan((bestDeg * Math.PI) / 180).toFixed(6));
   return {
+    angleDeg: bestDeg,
+    shearX,
+    applied: true,
     data: sheared.data,
     width: sheared.width,
     height: sheared.height,
     slantDeg: bestDeg,
     corrected: true,
-    angleDeg: bestDeg,
     deslanted: true,
   };
 }
