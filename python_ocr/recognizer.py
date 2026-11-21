@@ -347,6 +347,28 @@ def recognize_image_bytes(
     needs_purpose = len(lines_out) == 0 or not full_text
 
     if prep.export_dir:
+        # Render final annotated OCR overlay on top of stage 5 (05_adaptive_binary.png)
+        overlay = cv2.cvtColor(prep.binary, cv2.COLOR_GRAY2BGR)
+        for i, l in enumerate(lines_out):
+            b = l["bbox"]
+            cv2.rectangle(overlay, (b["x0"], b["y0"]), (b["x1"], b["y1"]), (235, 99, 37), 2)
+            label = f"{i + 1}: {l['text']}"
+            tx = max(4, b["x0"])
+            ty = max(16, b["y0"] - 4)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(overlay, (tx - 2, ty - th - 4), (tx + tw + 4, ty + 2), (235, 99, 37), -1)
+            cv2.putText(
+                overlay,
+                label,
+                (tx, ty - 1),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+        cv2.imwrite(str(Path(prep.export_dir) / "07_ocr_text_overlay.png"), overlay)
+
         report_lines = [
             "Engine: python-local-ocr (OpenCV + ONNX TrOCR/PARSeq + Python Postprocess)",
             f"Profile: {ocr_profile} | CaptureMode: {capture_mode}",

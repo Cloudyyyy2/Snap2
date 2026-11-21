@@ -107,6 +107,7 @@ def test_fastapi_health_and_ocr_offline(tmp_path: Path):
     assert len(data["lines"]) >= 1
     assert 0.0 <= data["lines"][0]["normBox"]["x"] <= 1.0
     assert data["text"].strip() != ""
+    assert (Path(data["exportDir"]) / "07_ocr_text_overlay.png").is_file()
 
 
 def test_python_postprocess_and_grocery_parity():

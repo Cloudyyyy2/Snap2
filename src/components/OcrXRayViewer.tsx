@@ -21,6 +21,7 @@ function formatStageLabel(filename: string): string {
   if (filename.startsWith('06_line_')) {
     return filename.replace('.png', '').replace('06_line_', 'Line ');
   }
+  if (filename.startsWith('07_')) return '07 OCR Overlay';
   return filename.replace('.png', '');
 }
 
