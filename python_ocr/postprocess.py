@@ -90,7 +90,7 @@ VISUAL_CONFUSION_PAIRS = {
 
 
 def detect_and_clean_hallucination(text: str) -> str:
-    """Strip repetitive TrOCR/PARSeq decoding loops and pure symbol noise."""
+    """Strip repetitive TrOCR/PARSeq decoding loops and pure symbol/digit noise."""
     if not text:
         return ""
     cleaned_lines: List[str] = []
@@ -98,9 +98,12 @@ def detect_and_clean_hallucination(text: str) -> str:
         s = line.strip()
         if not s:
             continue
-        # Reject repeated 4+ identical characters or 3+ identical consecutive words
-        if re.search(r"(.)\1{4,}", s):
-            s = re.sub(r"(.)\1{3,}", r"\1\1", s)
+        # Reject TrOCR repeating 1-3 char loops (e.g. "5858585858", "0000000000")
+        if re.search(r"(.{1,3})\1{4,}", s):
+            continue
+        # Reject known TrOCR empty-crop Wikipedia/Hansard hallucination boilerplate
+        if re.search(r"Government of (?:Australia|South Africa)|Parliament of Australia|Not logged inTalk", s, re.I):
+            continue
         words = s.split()
         deduped: List[str] = []
         repeat_run = 0
@@ -276,13 +279,14 @@ def correct_grocery_context(text: str) -> str:
 
     out = text
     for pat, repl in (
-        (r"'?(?:push|fresh)\s+n0339\b", "fresh mozza"),
-        (r"\buhuerda\b", "huevos"),
+        (r"'?(?:push|fresh)\s+(?:n0339|mozza)\b", "fresh mozza"),
+        (r"\b(?:uhuerda|huerdas)\b", "huevos"),
         (r"\btootaposls\b", "toothpaste"),
         (r"\bpull\s+chips\b", "pita chips"),
         (r"\bcortachip\b", "corn chip"),
         (r"\bmedical\s+cheese\b", "mexican cheese"),
-        (r"\bparmesan(?:s)?\s+(?:spend|send|sherd)\b", "parmesan shred"),
+        (r"\bparmesan(?:'?s)?\s+(?:spend|send|sherd)\b", "parmesan shred"),
+        (r"\bbrier\s+sheets\b", "dryer sheets"),
         (r"\b(?:sood|soap)\s+platanos\b", "good platanos"),
         (r"\(\s*gun\s*\)", "(green)"),
     ):

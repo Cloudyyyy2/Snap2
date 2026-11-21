@@ -358,48 +358,92 @@ def split_wide_line_box(binary: np.ndarray, box: LineBox, max_aspect: float = 11
 
 
 def segment_lines(binary: np.ndarray) -> List[LineBox]:
-    """Segment horizontal text lines via projection profile with ascender/descender padding."""
+    """Segment text lines via smoothed horizontal projection peaks & valley splitting."""
     h, w = binary.shape
-    ink = (binary == 0).astype(np.uint8)
-    row_sums = ink.sum(axis=1)
-    min_row_ink = max(2, int(w * 0.004))
+    if h == 0 or w == 0:
+        return []
 
-    raw_bands: List[Tuple[int, int]] = []
-    in_band = False
-    start_y = 0
-    for y in range(h):
-        if row_sums[y] >= min_row_ink:
-            if not in_band:
-                in_band = True
-                start_y = y
-        else:
-            if in_band:
-                in_band = False
-                if y - start_y >= 6:
-                    raw_bands.append((start_y, y - 1))
-    if in_band and h - start_y >= 6:
-        raw_bands.append((start_y, h - 1))
+    ink = (binary == 0).astype(np.float32)
+    proj = ink.sum(axis=1)
 
-    merged: List[Tuple[int, int]] = []
-    for y0, y1 in raw_bands:
-        if merged and y0 - merged[-1][1] <= 4:
-            merged[-1] = (merged[-1][0], y1)
+    # Smooth horizontal projection (radius 2) matching lines.ts
+    smooth = np.convolve(proj, np.ones(5, dtype=np.float32) / 5.0, mode="same")
+    max_proj = float(np.max(smooth))
+    if max_proj < 2.0:
+        return []
+
+    peak_threshold = max(2.0, max_proj * 0.14)
+    min_peak_dist = max(10, int(round(h * 0.025)))
+
+    raw_peaks = [
+        y
+        for y in range(1, h - 1)
+        if smooth[y] >= peak_threshold and smooth[y] >= smooth[y - 1] and smooth[y] >= smooth[y + 1]
+    ]
+
+    peaks: List[int] = []
+    for p in raw_peaks:
+        if not peaks:
+            peaks.append(p)
+            continue
+        prev = peaks[-1]
+        min_between = float(np.min(smooth[prev : p + 1]))
+        weaker_peak = min(float(smooth[prev]), float(smooth[p]))
+        valley_ratio = 0.48 if (p - prev) >= max(18, int(round(min_peak_dist * 1.8))) else 0.35
+        if min_between > weaker_peak * valley_ratio:
+            if smooth[p] > smooth[prev]:
+                peaks[-1] = p
         else:
-            merged.append((y0, y1))
+            peaks.append(p)
+
+    if not peaks:
+        return []
+
+    active_threshold = max(0.5, max_proj * 0.015)
+    valleys: List[int] = []
+    for i in range(len(peaks) - 1):
+        p_a, p_b = peaks[i], peaks[i + 1]
+        if p_b <= p_a + 1:
+            valleys.append(p_a)
+            continue
+        seg = smooth[p_a + 1 : p_b]
+        min_val = float(np.min(seg))
+        idxs = np.where(seg <= min_val + 0.5)[0]
+        if len(idxs) > 0:
+            valley_mid = p_a + 1 + int((idxs[0] + idxs[-1]) // 2)
+        else:
+            valley_mid = (p_a + p_b) // 2
+        valleys.append(max(p_a, min(p_b - 1, valley_mid)))
 
     boxes: List[LineBox] = []
-    for y0, y1 in merged:
-        band_h = y1 - y0 + 1
-        pad_y = max(6, int(round(band_h * 0.25)))
-        py0 = max(0, y0 - pad_y)
-        py1 = min(h - 1, y1 + pad_y)
+    for i, pk in enumerate(peaks):
+        upper_limit = 0 if i == 0 else valleys[i - 1] + 1
+        lower_limit = h - 1 if i == len(peaks) - 1 else valleys[i]
+
+        y0 = pk
+        while y0 > upper_limit and smooth[y0 - 1] >= active_threshold:
+            y0 -= 1
+        y1 = pk
+        while y1 < lower_limit and smooth[y1 + 1] >= active_threshold:
+            y1 += 1
+
+        prev_dist = pk - peaks[i - 1] if i > 0 else 10**6
+        next_dist = peaks[i + 1] - pk if i < len(peaks) - 1 else 10**6
+        local_pitch = min(prev_dist, next_dist)
+        pad_y = min(max(6, int(round((y1 - y0 + 1) * 0.28))), int(round(local_pitch * 0.32))) if local_pitch < 10**5 else 10
+        py0 = max(upper_limit, y0 - pad_y)
+        py1 = min(lower_limit, y1 + pad_y)
+
+        if py1 - py0 < 6:
+            continue
+
         col_sums = ink[py0 : py1 + 1, :].sum(axis=0)
         xs = np.where(col_sums > 0)[0]
         if len(xs) == 0:
             continue
         x0 = max(0, int(xs[0]) - 6)
         x1 = min(w - 1, int(xs[-1]) + 6)
-        if x1 - x0 < 8 or py1 - py0 < 8:
+        if x1 - x0 < 8:
             continue
         boxes.extend(split_wide_line_box(binary, LineBox(x0=x0, y0=py0, x1=x1, y1=py1)))
 

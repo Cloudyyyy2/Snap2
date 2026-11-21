@@ -79,17 +79,9 @@ class OfflineTrOcrEngine:
 
     @staticmethod
     def _prepare_pixel_values(crop_gray: np.ndarray) -> np.ndarray:
-        h, w = crop_gray.shape[:2]
-        scale = min(384.0 / max(1, w), 384.0 / max(1, h))
-        new_w = max(1, min(384, int(round(w * scale))))
-        new_h = max(1, min(384, int(round(h * scale))))
-        resized = cv2.resize(crop_gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-        canvas = np.full((384, 384), 255, dtype=np.uint8)
-        y_off = (384 - new_h) // 2
-        x_off = (384 - new_w) // 2
-        canvas[y_off : y_off + new_h, x_off : x_off + new_w] = resized
-
-        rgb = np.stack([canvas, canvas, canvas], axis=0).astype(np.float32)
+        """Resize line crop directly to 384x384 RGB with ViT normalization (matches preprocessor_config.json)."""
+        resized = cv2.resize(crop_gray, (384, 384), interpolation=cv2.INTER_CUBIC)
+        rgb = np.stack([resized, resized, resized], axis=0).astype(np.float32)
         rgb = (rgb / 255.0 - 0.5) / 0.5
         return np.expand_dims(rgb, axis=0)
 
