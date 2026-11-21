@@ -93,7 +93,17 @@ OCR_CONFUSION_RULES: Tuple[Tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"0"), "o"),
     (re.compile(r"1"), "l"),
     (re.compile(r"5"), "s"),
+    (re.compile(r"8"), "b"),
+    (re.compile(r"2"), "z"),
+    (re.compile(r"9"), "g"),
+    (re.compile(r"6"), "b"),
 )
+
+# Explicit known cursive/PARSeq misreads kept OUT of LEXICON_SET so they never short-circuit
+MISREAD_ALIASES: Dict[str, str] = {
+    "browlli": "broccoli",
+    "virwilli": "broccoli",
+}
 
 VISUAL_CONFUSION_PAIRS = {
     ("a", "o"), ("o", "a"), ("a", "e"), ("e", "a"), ("e", "s"), ("s", "e"),
@@ -183,19 +193,72 @@ def damerau_levenshtein(a: str, b: str) -> int:
 
 def weighted_handwriting_distance(a: str, b: str) -> float:
     al, bl = len(a), len(b)
+    if al == 0:
+        return float(bl)
+    if bl == 0:
+        return float(al)
     d = [[0.0] * (bl + 1) for _ in range(al + 1)]
     for i in range(al + 1):
         d[i][0] = float(i)
     for j in range(bl + 1):
         d[0][j] = float(j)
+    fast_drop_chars = "aeiour"
     for i in range(1, al + 1):
+        ch_obs = a[i - 1]
         for j in range(1, bl + 1):
-            sub_cost = 0.0 if a[i - 1] == b[j - 1] else (0.45 if (a[i - 1], b[j - 1]) in VISUAL_CONFUSION_PAIRS else 1.0)
-            val = min(d[i - 1][j] + 1.0, d[i][j - 1] + 1.0, d[i - 1][j - 1] + sub_cost)
+            ch_tar = b[j - 1]
+            sub_cost = 0.0 if ch_obs == ch_tar else (0.45 if (ch_obs, ch_tar) in VISUAL_CONFUSION_PAIRS else 1.0)
+            ins_cost = 0.65 if ch_tar in fast_drop_chars else 0.95
+            del_cost = 0.95
+            val = min(d[i - 1][j] + del_cost, d[i][j - 1] + ins_cost, d[i - 1][j - 1] + sub_cost)
             if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
-                val = min(val, d[i - 2][j - 2] + 0.5)
+                val = min(val, d[i - 2][j - 2] + 0.6)
             d[i][j] = val
     return d[al][bl]
+
+
+def build_ligature_variants(word: str) -> List[str]:
+    lower = word.lower()
+    step1: Dict[str, None] = {lower: None}
+    if "n" in lower:
+        step1[re.sub(r"n([aeiou])", r"ri\1", lower)] = None
+        step1[lower.replace("ndn", "ndri")] = None
+    if "d" in lower:
+        step1[lower.replace("d", "cl")] = None
+    if re.match(r"^vi", lower):
+        step1[re.sub(r"^vi", "b", lower)] = None
+        step1[re.sub(r"^vir", "bro", lower)] = None
+    if re.search(r"rm{1,2}w$", lower):
+        step1[re.sub(r"rm{1,2}w$", "morrow", lower)] = None
+    if "m" in lower:
+        step1[lower.replace("m", "rn")] = None
+
+    all_variants: Dict[str, None] = dict(step1)
+    for s in step1:
+        if "w" in s:
+            all_variants[s.replace("w", "co")] = None
+            all_variants[s.replace("w", "oc")] = None
+            all_variants[s.replace("w", "oo")] = None
+            all_variants[s.replace("w", "ur")] = None
+    return list(all_variants.keys())
+
+
+def repair_conservative_phrases(text: str) -> str:
+    if not text:
+        return text
+    out = re.sub(
+        r"\bas\s+peas\b",
+        lambda m: "Asparagus" if m.group(0).startswith("A") else "asparagus",
+        text,
+        flags=re.I,
+    )
+    out = re.sub(
+        r"\bpa(?:i?n)\s+(?:an|au)\s+chocolat\b",
+        "Pain au chocolat",
+        out,
+        flags=re.I,
+    )
+    return out
 
 
 def _match_case(original: str, replacement: str) -> str:
@@ -230,10 +293,8 @@ def correct_word_with_lexicon(raw_word: str, max_distance: int | None = None) ->
     if lower in LEXICON_SET:
         return raw_word, False
 
-    for pat, repl in OCR_CONFUSION_RULES:
-        cand = pat.sub(repl, lower)
-        if cand != lower and cand in LEXICON_SET:
-            return f"{prefix}{_match_case(core, cand)}{suffix}", True
+    if lower in MISREAD_ALIASES:
+        return f"{prefix}{_match_case(core, MISREAD_ALIASES[lower])}{suffix}", True
 
     # Compound split (e.g. "potatochip", "orangjuice")
     if len(lower) >= 7:
@@ -249,34 +310,89 @@ def correct_word_with_lexicon(raw_word: str, max_distance: int | None = None) ->
                     if changed and left_fix.lower() in LEXICON_SET:
                         return f"{prefix}{_match_case(core[:split_at], left_fix)} {right}{suffix}", True
 
+    # Common 2-letter lowercase fast-handwriting shorthand ('fr' / 'fm' -> 'for')
+    if lower in ("fr", "fm") and core == lower:
+        return f"{prefix}for{suffix}", True
+
+    for pat, repl in OCR_CONFUSION_RULES:
+        cand = pat.sub(repl, lower)
+        if cand != lower and cand in LEXICON_SET:
+            return f"{prefix}{_match_case(core, cand)}{suffix}", True
+
+    # Test ligature expansions directly against exact lexicon first (e.g. Sundned -> Sundried)
+    variants = build_ligature_variants(lower)
+    for v in variants:
+        if v != lower and v in LEXICON_SET:
+            return f"{prefix}{_match_case(core, v)}{suffix}", True
+
     is_cap = core[0].isupper()
     if is_cap and len(lower) <= 4:
         return raw_word, False
 
-    eff_max = max_distance if max_distance is not None else (3 if len(lower) >= 5 else 1)
+    eff_max_outer = max_distance if max_distance is not None else (3 if len(lower) >= 5 else 1)
     best_cand: str | None = None
     best_w = float("inf")
     best_d = 99
 
     for dict_word in LEXICON_WORDS:
-        if abs(len(dict_word) - len(lower)) > eff_max + 1:
+        if abs(len(dict_word) - len(lower)) > eff_max_outer + 1:
             continue
-        if len(lower) <= 4 and dict_word[0] != lower[0] and (lower[0], dict_word[0]) not in VISUAL_CONFUSION_PAIRS:
-            continue
-        d = damerau_levenshtein(lower, dict_word)
-        if d > eff_max:
-            continue
-        w_cost = weighted_handwriting_distance(lower, dict_word)
-        if d == 3 and w_cost > 2.15:
-            continue
-        if d == 2 and len(lower) <= 5 and w_cost > 1.75:
-            continue
-        if w_cost < best_w or (abs(w_cost - best_w) < 0.01 and d < best_d):
-            best_w = w_cost
-            best_d = d
-            best_cand = dict_word
+        if len(lower) <= 4:
+            first_pair = (lower[0], dict_word[0]) in VISUAL_CONFUSION_PAIRS
+            second_match = len(dict_word) > 1 and dict_word[1] == lower[0]
+            if dict_word[0] != lower[0] and not second_match and not first_pair:
+                continue
 
-    if best_cand and (not is_cap or (best_w <= 1.8 and (best_cand[0] == lower[0] or best_d <= 1))):
+        for obs in variants:
+            if len(obs) >= 7:
+                eff_max = max(eff_max_outer, 3)
+            elif len(obs) >= 5 and len(dict_word) > len(obs):
+                eff_max = 3
+            else:
+                eff_max = min(eff_max_outer, 2 if len(obs) >= 5 else 1)
+
+            if abs(len(dict_word) - len(obs)) > eff_max:
+                continue
+
+            plain_dist = damerau_levenshtein(obs, dict_word)
+            if plain_dist > eff_max:
+                continue
+
+            w_cost = weighted_handwriting_distance(obs, dict_word) + (0.0 if obs == lower else 0.12)
+            if plain_dist == 3:
+                if w_cost > 2.15:
+                    continue
+                if len(obs) <= 6:
+                    start_ok = obs[0] == dict_word[0] or (obs[0], dict_word[0]) in VISUAL_CONFUSION_PAIRS
+                    end_ok = obs[-1] == dict_word[-1] or (obs[-1], dict_word[-1]) in VISUAL_CONFUSION_PAIRS
+                    if not start_ok or not end_ok:
+                        continue
+            if plain_dist == 2 and len(obs) <= 5 and w_cost > 1.75:
+                continue
+
+            if w_cost < best_w or (abs(w_cost - best_w) < 0.01 and plain_dist < best_d):
+                best_w = w_cost
+                best_d = plain_dist
+                best_cand = dict_word
+
+    starts_match = best_cand is not None and (
+        best_cand[0] == lower[0] or any(v[0] == best_cand[0] for v in variants)
+    )
+    ends_match = best_cand is not None and best_cand[-1] == lower[-1]
+    compressed_cursive_ok = (
+        not is_cap
+        and len(lower) >= 4
+        and best_d <= 2
+        and best_w <= 1.35
+        and starts_match
+        and ends_match
+    )
+
+    if (
+        best_cand
+        and (best_d <= eff_max_outer or compressed_cursive_ok)
+        and (not is_cap or (best_w <= 1.8 and (starts_match or best_d <= 1)))
+    ):
         return f"{prefix}{_match_case(core, best_cand)}{suffix}", True
 
     return raw_word, False
@@ -315,9 +431,10 @@ def correct_grocery_context(text: str) -> str:
         (r"\bbrier\s+sheets\b", "dryer sheets"),
         (r"\b(?:sood|soap)\s+platanos\b", "good platanos"),
         (r"\(\s*gun\s*\)", "(green)"),
-        (r"\bpan(?:an)?\s+chocolat\b", "pain au chocolat"),
+        (r"\bpan(?:an)?\s+chocolat\b", "Pain au chocolat"),
         (r"\btimatrel\b", "tomatoes"),
-        (r"\bvirwilli\b", "broccoli"),
+        (r"\bvirwilli\b", lambda m: _match_case(m.group(0), "broccoli")),
+        (r"\bbrowlli\b", lambda m: _match_case(m.group(0), "broccoli")),
         (r"\bhalkey\b", "turkey"),
         (r"\bbatm\b", "bacon"),
         (r"\baspornus\b", "asparagus"),
@@ -334,12 +451,20 @@ def correct_grocery_context(text: str) -> str:
             suffix = m_suf.group(0) if m_suf else ""
             core = token[len(prefix) : len(token) - len(suffix) if suffix else len(token)]
             lower = core.lower()
-            if len(lower) < 3 or lower in GROCERY_CORE_SET or lower.isdigit():
+            if (
+                len(lower) < 3
+                or lower in GROCERY_CORE_SET
+                or lower.isdigit()
+                or re.match(r"^\$?\d+([.:/]\d+)?(am|pm)?$", core, re.I)
+                or (len(lower) <= 4 and lower in LEXICON_SET)
+            ):
                 fixed_tokens.append(token)
                 continue
 
+            is_cap = bool(core) and core[0].isupper()
             best_word: str | None = None
             best_score = float("inf")
+            best_d = 99
             for g_word in GROCERY_CORE_WORDS:
                 if abs(len(g_word) - len(lower)) > 2:
                     continue
@@ -354,13 +479,16 @@ def correct_grocery_context(text: str) -> str:
                 if d <= 2 and w_cost < best_score:
                     best_score = w_cost
                     best_word = g_word
+                    best_d = d
 
-            if best_word and best_score <= 1.75:
+            if best_word and best_score <= 1.75 and (
+                not is_cap or (not (len(lower) <= 4 and lower in LEXICON_SET) and (best_word[0] == lower[0] or best_d <= 1))
+            ):
                 fixed_tokens.append(f"{prefix}{_match_case(core, best_word)}{suffix}")
             else:
                 fixed_tokens.append(token)
         fixed_lines.append(" ".join(fixed_tokens))
-    return "\n".join(fixed_lines)
+    return repair_conservative_phrases("\n".join(fixed_lines))
 
 
 def correct_text_with_lexicon(raw_text: str, capture_mode: str = "auto") -> str:
@@ -368,8 +496,14 @@ def correct_text_with_lexicon(raw_text: str, capture_mode: str = "auto") -> str:
         return raw_text
     lines_out: List[str] = []
     for line in raw_text.splitlines():
-        words = [correct_word_with_lexicon(tok)[0] for tok in line.split()]
-        lines_out.append(" ".join(words))
+        repaired_line = repair_conservative_phrases(line)
+        tokens = re.split(r"(\s+)", repaired_line)
+        fixed_tokens = [
+            tok if (not tok or tok.isspace()) else correct_word_with_lexicon(tok)[0]
+            for tok in tokens
+        ]
+        joined = "".join(fixed_tokens)
+        lines_out.append(repair_conservative_phrases(joined))
     corrected = "\n".join(lines_out)
 
     looks_like_grocery = capture_mode == "grocery" or (
@@ -383,5 +517,5 @@ def correct_text_with_lexicon(raw_text: str, capture_mode: str = "auto") -> str:
         >= 2
     )
     if looks_like_grocery:
-        corrected = correct_grocery_context(corrected)
+        corrected = repair_conservative_phrases(correct_grocery_context(corrected))
     return corrected
