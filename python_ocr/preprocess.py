@@ -218,23 +218,30 @@ def remove_ruled_lines(gray: np.ndarray) -> np.ndarray:
 
 
 def enhance_contrast(gray: np.ndarray) -> np.ndarray:
-    """Denoise gently and boost ink-to-paper contrast with CLAHE."""
+    """Denoise gently and apply percentile ink-to-paper stretch (matches enhanceInkContrast)."""
     denoised = cv2.medianBlur(gray, 3)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    return clahe.apply(denoised)
+    p_low = float(np.percentile(denoised, 2.0))
+    p_high = float(np.percentile(denoised, 78.0))
+    if p_high - p_low < 12.0:
+        return denoised
+    stretched = ((denoised.astype(np.float32) - p_low) / (p_high - p_low)) * 255.0
+    return np.clip(stretched, 0, 255).astype(np.uint8)
 
 
-def binarize_adaptive(gray: np.ndarray) -> np.ndarray:
-    """Adaptive Gaussian thresholding producing 0=ink, 255=paper."""
-    h, w = gray.shape
-    block = max(15, (min(h, w) // 24) | 1)
-    return cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, block, 11
-    )
+def binarize_adaptive(gray: np.ndarray, window: int = 25, k: float = 0.18) -> np.ndarray:
+    """Vectorized Sauvola local thresholding producing 0=ink, 255=paper."""
+    f = gray.astype(np.float32)
+    mean = cv2.boxFilter(f, ddepth=-1, ksize=(window, window), borderType=cv2.BORDER_REPLICATE)
+    sq_mean = cv2.boxFilter(f * f, ddepth=-1, ksize=(window, window), borderType=cv2.BORDER_REPLICATE)
+    var = np.maximum(0.0, sq_mean - mean * mean)
+    std = np.sqrt(var)
+    thresh = mean * (1.0 + k * ((std / 128.0) - 1.0))
+    binary = np.where(f <= thresh, 0, 255).astype(np.uint8)
+    return binary
 
 
 def strip_spiral_and_corner_artifacts(binary: np.ndarray) -> np.ndarray:
-    """Remove inset spiral-coil columns, corner wedges, and 1-2px speckles."""
+    """Remove edge-touching spiral coils, inset spiral columns, corner wedges, and speckles."""
     h, w = binary.shape
     if w < 160 or h < 120:
         return binary.copy()
@@ -243,29 +250,39 @@ def strip_spiral_and_corner_artifacts(binary: np.ndarray) -> np.ndarray:
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(inv, connectivity=8)
     out = binary.copy()
 
-    # Collect left/right margin small components to detect vertically aligned spiral rings
     left_cands: List[int] = []
+    right_cands: List[int] = []
     for idx in range(1, num_labels):
         x, y, cw, ch, area = stats[idx]
-        if area <= 2 or (cw > w * 0.45 and ch > h * 0.45):
+        # Remove tiny speckles, huge solid blocks, or thin horizontal rule remnants
+        if area <= 3 or (cw > w * 0.45 and ch > h * 0.45) or (cw > w * 0.35 and ch <= 4):
             out[labels == idx] = 255
             continue
-        if x + cw <= w * 0.14 and cw <= w * 0.10 and ch <= h * 0.12 and area >= 6:
+        # Remove components touching outer left/right border that are narrow/clipped (spiral rings / clipped next-col)
+        if (x <= 3 and cw <= w * 0.17 and ch <= h * 0.18) or (
+            x + cw >= w - 4 and cw <= w * 0.14 and ch <= h * 0.18
+        ):
+            out[labels == idx] = 255
+            continue
+        if x + cw <= w * 0.18 and cw <= w * 0.14 and ch <= h * 0.12 and area >= 6:
             left_cands.append(idx)
+        elif x >= w * 0.85 and cw <= w * 0.14 and ch <= h * 0.12 and area >= 6:
+            right_cands.append(idx)
 
-    if len(left_cands) >= 3:
-        xs = sorted(centroids[i][0] for i in left_cands)
-        med_x = xs[len(xs) // 2]
-        aligned = [i for i in left_cands if abs(centroids[i][0] - med_x) <= max(10, w * 0.045)]
-        if len(aligned) >= 3:
-            ys = sorted(centroids[i][1] for i in aligned)
-            gaps = [ys[k] - ys[k - 1] for k in range(1, len(ys)) if ys[k] - ys[k - 1] >= 6]
-            if len(gaps) >= 2:
-                med_gap = sorted(gaps)[len(gaps) // 2]
-                consistent = sum(1 for g in gaps if abs(g - med_gap) <= max(4, med_gap * 0.45))
-                if consistent >= max(2, len(gaps) // 2):
-                    for idx in aligned:
-                        out[labels == idx] = 255
+    for cands in (left_cands, right_cands):
+        if len(cands) >= 3:
+            xs = sorted(centroids[i][0] for i in cands)
+            med_x = xs[len(xs) // 2]
+            aligned = [i for i in cands if abs(centroids[i][0] - med_x) <= max(12, w * 0.055)]
+            if len(aligned) >= 3:
+                ys = sorted(centroids[i][1] for i in aligned)
+                gaps = [ys[k] - ys[k - 1] for k in range(1, len(ys)) if ys[k] - ys[k - 1] >= 6]
+                if len(gaps) >= 2:
+                    med_gap = sorted(gaps)[len(gaps) // 2]
+                    consistent = sum(1 for g in gaps if abs(g - med_gap) <= max(6, med_gap * 0.5))
+                    if consistent >= max(2, len(gaps) // 2):
+                        for idx in aligned:
+                            out[labels == idx] = 255
 
     return out
 

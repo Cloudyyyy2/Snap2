@@ -101,8 +101,15 @@ def detect_and_clean_hallucination(text: str) -> str:
         # Reject TrOCR repeating 1-3 char loops (e.g. "5858585858", "0000000000")
         if re.search(r"(.{1,3})\1{4,}", s):
             continue
-        # Reject known TrOCR empty-crop Wikipedia/Hansard hallucination boilerplate
-        if re.search(r"Government of (?:Australia|South Africa)|Parliament of Australia|Not logged inTalk", s, re.I):
+        # Reject known TrOCR empty-crop Wikipedia/Hansard/calendar hallucination boilerplate
+        if re.search(
+            r"Government of |Parliament of |Senate of |House of (?:Commons|Representatives)|Washington Post|Not logged inTalk|a b c d e f g",
+            s,
+            re.I,
+        ):
+            continue
+        # Reject pure year-range / zero-string hallucinations ("1961 62", "0 0000", "1")
+        if re.match(r"^(?:19\d{2}(?:\s+\d{2,4})*|[0\s\.\-:;,\*@#1]+)$", s):
             continue
         words = s.split()
         deduped: List[str] = []
@@ -289,6 +296,12 @@ def correct_grocery_context(text: str) -> str:
         (r"\bbrier\s+sheets\b", "dryer sheets"),
         (r"\b(?:sood|soap)\s+platanos\b", "good platanos"),
         (r"\(\s*gun\s*\)", "(green)"),
+        (r"\bpan(?:an)?\s+chocolat\b", "pain au chocolat"),
+        (r"\btimatrel\b", "tomatoes"),
+        (r"\bvirwilli\b", "broccoli"),
+        (r"\bhalkey\b", "turkey"),
+        (r"\bbatm\b", "bacon"),
+        (r"\baspornus\b", "asparagus"),
     ):
         out = re.sub(pat, repl, out, flags=re.I)
 
