@@ -11,6 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "models:handwriting": "node scripts/download-models.mjs",
+    "sync:lexicon": "tsx scripts/sync-lexicon.ts",
     "test:unit": "vitest run",
     "test:python": ".venv\\Scripts\\python.exe -m pytest python_ocr\\tests -v"
   },

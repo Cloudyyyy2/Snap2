@@ -15,6 +15,7 @@ _BASE_LEXICON_WORDS: Tuple[str, ...] = (
     "read", "write", "complete", "deliver", "collect", "drop", "wash", "pack",
     "remind", "remember", "attend", "hire", "change", "invite", "sign", "transfer",
     "deposit", "withdraw", "cook", "bake", "study", "exercise", "workout", "walk",
+    "code", "ship",
     # Grocery & Household
     "groceries", "grocery", "milk", "eggs", "bread", "coffee", "tea", "fruit", "vegetables",
     "water", "juice", "cheese", "butter", "chicken", "meat", "rice", "pasta",
@@ -29,13 +30,31 @@ _BASE_LEXICON_WORDS: Tuple[str, ...] = (
     # Tasks, Bills, Errands & Time
     "snack", "dinner", "lunch", "breakfast", "medicine", "prescription", "pills",
     "vitamins", "dentist", "doctor", "clinic", "hospital", "appointment", "checkup",
-    "electric", "electricity", "utility", "gas", "internet", "wifi", "phone", "bill",
+    "therapy", "vet", "veterinarian", "optometrist",
+    "electric", "electricity", "utility", "gas", "internet", "wifi", "cable", "phone", "bill",
     "bills", "rent", "mortgage", "insurance", "tax", "taxes", "invoice", "receipt",
-    "payment", "due", "charge", "ticket", "tickets", "flight", "hotel", "train", "car",
+    "payment", "due", "charge", "fee", "subscription", "debit",
+    "ticket", "tickets", "flight", "hotel", "train", "bus", "car", "rental",
+    "airport", "luggage", "passport", "visa", "license", "registration", "permit",
+    "homework", "exam", "assignment", "sync", "standup", "presentation",
+    "contract", "document", "application", "resume", "proposal", "feedback",
+    "gift", "package", "parcel", "mail", "envelope", "keys", "wallet", "charger",
+    "glasses", "laptop", "device", "dishes", "plants", "cat", "pet", "gym",
+    # People & Family
+    "mom", "dad", "boss", "colleague", "coworker", "neighbor", "landlord", "tenant",
+    "client", "assistant",
+    # Time & Scheduling Words
     "today", "tomorrow", "tonight", "yesterday", "now", "soon", "later", "morning",
-    "afternoon", "evening", "night", "day", "week", "weekend", "month", "year",
-    "urgent", "asap", "important", "monday", "tuesday", "wednesday", "thursday",
-    "friday", "saturday", "sunday", "am", "pm", "for", "and", "or", "the", "with", "at",
+    "noon", "afternoon", "evening", "night", "midnight", "day", "week", "weekend",
+    "month", "year", "daily", "weekly", "monthly", "urgent", "asap", "important",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    "hours", "minutes", "priority", "medium",
+    # Connectors & Function Words
+    "am", "pm", "for", "and", "or", "the", "with", "at",
+    "is", "are", "was", "were", "been", "being", "has", "had", "does", "did",
+    "shall", "needs", "needed", "wants", "wanted", "nine",
 )
 
 def _load_compact_lexicon() -> Tuple[str, ...]:
