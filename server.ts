@@ -4,14 +4,13 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { createRequire } from 'module';
 import type webpushType from 'web-push';
 import dotenv from 'dotenv';
+import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
 import os from 'os';
 import path from 'path';
 import {
-  processImageWithLocalOcr,
-  decodeBase64Image,
   isHandwritingModelAvailable,
   getActiveHandwritingModelName,
   OcrProfile,
@@ -19,6 +18,7 @@ import {
 import { isPrintedModelAvailable, getActivePrintedModelName } from './server/printedRecognizer';
 import { parseReminderLocally, LocalCaptureMode } from './server/localReminderParser';
 import { ensureOfflineModels, getModelProvisioningStatus } from './server/modelManager';
+import { correctTextWithLexicon, correctGroceryContext } from './src/lib/ocr/wordDataset';
 
 const require = createRequire(import.meta.url);
 const webpush = require('web-push') as typeof webpushType;
@@ -60,6 +60,129 @@ if (pushConfigured) {
 }
 
 const isOfflineOnly = () => process.env.OFFLINE_ONLY === '1';
+
+// Python Local OCR FastAPI sidecar management (strict Python-only local OCR)
+const PYTHON_OCR_PORT = process.env.PYTHON_OCR_PORT || '8001';
+const PYTHON_OCR_URL = process.env.PYTHON_OCR_URL || `http://127.0.0.1:${PYTHON_OCR_PORT}`;
+let pythonChild: ChildProcess | null = null;
+let pythonStartPromise: Promise<boolean> | null = null;
+
+function resolvePythonExecutable(): string {
+  const winVenv = path.resolve(process.cwd(), '.venv', 'Scripts', 'python.exe');
+  if (fs.existsSync(winVenv)) return winVenv;
+  const unixVenv = path.resolve(process.cwd(), '.venv', 'bin', 'python');
+  if (fs.existsSync(unixVenv)) return unixVenv;
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+async function isPythonOcrHealthy(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${PYTHON_OCR_URL}/health`, { signal: AbortSignal.timeout(1500) });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    return data?.status === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+async function ensurePythonOcrSidecar(): Promise<boolean> {
+  if (await isPythonOcrHealthy()) return true;
+  if (pythonStartPromise) return pythonStartPromise;
+
+  pythonStartPromise = (async () => {
+    const pyExe = resolvePythonExecutable();
+    pythonChild = spawn(
+      pyExe,
+      ['-m', 'uvicorn', 'python_ocr.server:app', '--host', '127.0.0.1', '--port', PYTHON_OCR_PORT],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HF_HUB_OFFLINE: '1',
+          TRANSFORMERS_OFFLINE: '1',
+          PYTHONUNBUFFERED: '1',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
+
+    pythonChild.stdout?.on('data', (d) => {
+      const msg = String(d).trim();
+      if (msg) console.log(`[python_ocr] ${msg}`);
+    });
+    pythonChild.stderr?.on('data', (d) => {
+      const msg = String(d).trim();
+      if (msg) console.warn(`[python_ocr] ${msg}`);
+    });
+    pythonChild.on('exit', () => {
+      pythonChild = null;
+      pythonStartPromise = null;
+    });
+
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (await isPythonOcrHealthy()) return true;
+    }
+    return false;
+  })();
+
+  const ok = await pythonStartPromise;
+  if (!ok) pythonStartPromise = null;
+  return ok;
+}
+
+const cleanupPythonSidecar = () => {
+  if (pythonChild && !pythonChild.killed) {
+    pythonChild.kill();
+    pythonChild = null;
+  }
+};
+process.on('exit', cleanupPythonSidecar);
+process.on('SIGINT', () => {
+  cleanupPythonSidecar();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  cleanupPythonSidecar();
+  process.exit(0);
+});
+
+async function callPythonOcr(params: {
+  image: string;
+  ocrProfile: OcrProfile;
+  exportStages: boolean;
+  captureMode: LocalCaptureMode;
+}) {
+  const ready = await ensurePythonOcrSidecar();
+  if (!ready) {
+    const err: any = new Error(
+      'Local Python OCR sidecar is unavailable. Ensure .venv is set up and python_ocr/server.py can start.'
+    );
+    err.status = 503;
+    throw err;
+  }
+
+  const resp = await fetch(`${PYTHON_OCR_URL}/ocr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image: params.image,
+      ocrProfile: params.ocrProfile,
+      captureMode: params.captureMode,
+      exportStages: params.exportStages,
+    }),
+  });
+
+  const data = await resp.json();
+  if (!resp.ok || !data?.success) {
+    const err: any = new Error(data?.detail || data?.error || `Python OCR failed (HTTP ${resp.status})`);
+    err.status = resp.status >= 400 && resp.status < 600 ? resp.status : 500;
+    throw err;
+  }
+
+  return data;
+}
 
 // Disk-persisted store for active browser push subscriptions
 const PUSH_STORE_PATH = path.resolve(process.cwd(), 'data', 'push-subscriptions.json');
@@ -121,13 +244,14 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
-app.get('/api/local-ocr/status', (_req, res) => {
+app.get('/api/local-ocr/status', async (_req, res) => {
   const offlineOnly = isOfflineOnly();
   const hwName = getActiveHandwritingModelName();
   const printedName = getActivePrintedModelName();
   const hwReady = isHandwritingModelAvailable();
   const prReady = isPrintedModelAvailable();
   const prov = getModelProvisioningStatus();
+  const pythonOcrReady = await isPythonOcrHealthy();
 
   const handwritingModel = hwReady
     ? 'ready'
@@ -142,6 +266,8 @@ app.get('/api/local-ocr/status', (_req, res) => {
 
   res.json({
     offlineOnly,
+    pythonOcrReady,
+    engine: 'python-local-ocr',
     handwritingModel,
     printedModel,
     handwritingModelState: hwReady ? 'ready' : prov.handwritingModelState,
@@ -208,14 +334,14 @@ app.post('/api/local-ocr', async (req, res) => {
       }
     }
 
-    const imageBuffer = decodeBase64Image(image);
-    const result = await processImageWithLocalOcr({
-      imageBuffer,
+    const result = await callPythonOcr({
+      image,
       ocrProfile: validProfile,
       exportStages: exportStages !== false,
+      captureMode: validMode,
     });
 
-    const deterministicData = result.text.trim()
+    const deterministicData = result.text?.trim()
       ? parseReminderLocally(
           result.text,
           typeof prompt === 'string' ? prompt : undefined,
@@ -229,15 +355,16 @@ app.post('/api/local-ocr', async (req, res) => {
     res.json({
       success: true,
       offlineOnly: isOfflineOnly(),
-      exportDirName: result.exportDir ? path.basename(result.exportDir) : undefined,
+      exportDirName: result.exportDirName || (result.exportDir ? path.basename(result.exportDir) : undefined),
       ...result,
       data: deterministicData,
     });
   } catch (error: any) {
-    console.error('Error running local OCR:', error);
-    res.status(500).json({
+    console.error('Error running local Python OCR:', error);
+    const status = typeof error?.status === 'number' ? error.status : 500;
+    res.status(status).json({
       success: false,
-      error: error?.message || 'Failed to process image with local OCR.',
+      error: error?.message || 'Failed to process image with local Python OCR.',
     });
   }
 });
@@ -428,21 +555,10 @@ Extract clear, actionable reminder details as JSON.
 - priority must be one of: "high", "medium", "low".
 - dueDate must be a valid ISO-8601 date-time string.`;
 
-    // If user verified OCR text, structure via text-only AI; otherwise orient & gently normalize image for Vision AI
+    // If user verified OCR text, structure via text-only AI; otherwise pass image directly
     let imageForVision: string | null = null;
     if (!verifiedOcrText && image && typeof image === 'string') {
-      try {
-        const sharp = (await import('sharp')).default;
-        const orientedJpeg = await sharp(decodeBase64Image(image))
-          .rotate()
-          .resize({ width: 1800, withoutEnlargement: true })
-          .normalize()
-          .jpeg({ quality: 92 })
-          .toBuffer();
-        imageForVision = `data:image/jpeg;base64,${orientedJpeg.toString('base64')}`;
-      } catch {
-        imageForVision = image;
-      }
+      imageForVision = image;
     }
 
     // Prefer Groq Vision/Text LLM when configured AND not in OFFLINE_ONLY mode
@@ -507,18 +623,19 @@ Extract clear, actionable reminder details as JSON.
       }
     }
 
-    // Offline / local deterministic fallback when OCR text is available or local TrOCR can read the image
+    // Offline / local Python OCR fallback when OCR text is available or Python OCR can read the image
     let localText = verifiedOcrText;
     let usedLocalOcr = false;
-    let localResMeta: Awaited<ReturnType<typeof processImageWithLocalOcr>> | null = null;
+    let localResMeta: any = null;
 
-    if (!localText && image && typeof image === 'string' && (isHandwritingModelAvailable() || isPrintedModelAvailable())) {
-      const localRes = await processImageWithLocalOcr({
-        imageBuffer: decodeBase64Image(image),
-        ocrProfile: ocrProfile || 'auto',
+    if (!localText && image && typeof image === 'string') {
+      const localRes = await callPythonOcr({
+        image,
+        ocrProfile: (ocrProfile as OcrProfile) || 'auto',
         exportStages: true,
+        captureMode: validMode,
       });
-      localText = localRes.text;
+      localText = localRes.text || '';
       localResMeta = localRes;
       usedLocalOcr = true;
     }
@@ -856,6 +973,11 @@ httpServer.listen(port, host, () => {
   for (const lan of getLanUrls(port, proto)) {
     console.log(`  Phone LAN:  ${lan}`);
   }
+  ensurePythonOcrSidecar()
+    .then((ok) => {
+      console.log(`  Python OCR: ${ok ? `ready (${PYTHON_OCR_URL})` : 'unavailable (503 until started)'}`);
+    })
+    .catch(() => {});
   startDailyPushScheduler();
   if (cloudflareUrl) {
     console.log(`  Cloudflare: ${cloudflareUrl}`);

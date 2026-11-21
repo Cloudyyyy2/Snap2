@@ -1,0 +1,44 @@
+[
+  {
+    "id": "rem-1795209032940",
+    "title": "bread",
+    "dueDate": "2026-11-21T02:00:00.000Z",
+    "completed": false,
+    "priority": "high"
+  },
+  {
+    "id": "rem-1795207230748",
+    "title": "bread",
+    "dueDate": "2026-11-21T17:00:00.000Z",
+    "completed": false,
+    "priority": "medium"
+  },
+  {
+    "id": "rem-1",
+    "title": "Electricity Bill Due",
+    "dueDate": "2026-11-18T15:11:32.959Z",
+    "completed": false,
+    "priority": "high"
+  },
+  {
+    "id": "rem-2",
+    "title": "Flight to San Francisco (UA 1420)",
+    "dueDate": "2026-11-24T15:11:32.961Z",
+    "completed": false,
+    "priority": "medium"
+  },
+  {
+    "id": "rem-3",
+    "title": "Dentist Checkup & Cleaning",
+    "dueDate": "2026-11-24T15:11:32.961Z",
+    "completed": false,
+    "priority": "medium"
+  },
+  {
+    "id": "rem-4",
+    "title": "Q3 Product Roadmap Review",
+    "dueDate": "2026-11-17T14:11:32.961Z",
+    "completed": true,
+    "priority": "high"
+  }
+]

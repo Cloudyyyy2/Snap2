@@ -148,11 +148,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const lines: OcrLineResult[] = Array.isArray(data.lines) ? data.lines : [];
       const linesCount = lines.length;
       const engineLabel =
-        data.recognizer === 'hybrid-host'
-          ? 'Auto · Mixed (Offline)'
-          : data.recognizer === 'tesseract-host'
-            ? 'Auto · Printed (Offline)'
-            : 'Auto · Handwriting (Offline)';
+        data.recognizer === 'python-local-ocr'
+          ? 'Python Local OCR · Offline'
+          : data.recognizer === 'hybrid-host'
+            ? 'Auto · Mixed (Offline)'
+            : data.recognizer === 'tesseract-host'
+              ? 'Auto · Printed (Offline)'
+              : 'Auto · Handwriting (Offline)';
 
       setEditableText(data.text || '');
       setOcrLines(lines);

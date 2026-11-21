@@ -20,7 +20,6 @@ import { InteractiveQuadCropper } from './InteractiveQuadCropper';
 import { Reminder, Category, Priority, ChecklistItem, DetectedStyle, OcrProfile } from '../types';
 import { detectWordsOnImage, DetectedWordSquare } from '../lib/ocr/onDeviceWordDetector';
 import { preprocessForOCR } from '../services/imageProcessor';
-import { runBrowserLocalOcr } from '../lib/ocr/browserLocalOcr';
 
 export interface RecentScanItem {
   id: string;
@@ -455,45 +454,24 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
                   : 'Running offline OCR & layout cleanup...'
           );
 
-          let data: any = null;
-          try {
-            const res = await fetch('/api/local-ocr', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                image,
-                ocrProfile: activeProfile,
-                exportStages: true,
-                prompt: promptText.trim() || undefined,
-              }),
-            });
+          const res = await fetch('/api/local-ocr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              image,
+              ocrProfile: activeProfile,
+              exportStages: true,
+              prompt: promptText.trim() || undefined,
+            }),
+          });
 
-            const contentType = res.headers.get('content-type') || '';
-            if (res.status === 404 || res.status === 405 || !contentType.includes('application/json')) {
-              data = await runBrowserLocalOcr({
-                image,
-                ocrProfile: activeProfile,
-                prompt: promptText.trim() || undefined,
-                onProgress: setStatusStep,
-              });
-            } else {
-              data = await res.json();
-              if (!res.ok || !data.success) {
-                throw new Error(data.error || `Offline OCR failed (HTTP ${res.status})`);
-              }
-            }
-          } catch (fetchErr: any) {
-            // Static hosting (e.g. GitHub Pages) has no /api backend — run pure client-side OCR
-            if (fetchErr instanceof TypeError || /Failed to fetch|NetworkError/i.test(fetchErr?.message || '')) {
-              data = await runBrowserLocalOcr({
-                image,
-                ocrProfile: activeProfile,
-                prompt: promptText.trim() || undefined,
-                onProgress: setStatusStep,
-              });
-            } else {
-              throw fetchErr;
-            }
+          const contentType = res.headers.get('content-type') || '';
+          const data = contentType.includes('application/json')
+            ? await res.json()
+            : { success: false, error: await res.text() };
+
+          if (!res.ok || !data.success) {
+            throw new Error(data.error || `Offline Python OCR failed (HTTP ${res.status})`);
           }
 
           fetchLocalOcrStatus();
@@ -503,19 +481,13 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
             setProcessedImage(data.processedPreview);
           }
 
-          const isBrowserFallback =
-            data.engineOrigin === 'browser' ||
-            (Array.isArray(data.appliedSteps) && data.appliedSteps.includes('browser-grayscale'));
-
           const recognizerEngineLabel =
-            data.recognizer === 'trocr-host'
-              ? isBrowserFallback
-                ? 'Offline · Browser TrOCR'
-                : `Offline · ${handwritingModelTier || 'TrOCR'} Handwriting`
-              : data.recognizer === 'tesseract-host'
-                ? isBrowserFallback
-                  ? 'Offline · Browser Tesseract'
-                  : `Offline · ${printedModelTier || 'Tesseract'} Printed`
+            data.recognizer === 'python-local-ocr'
+              ? 'Python Local OCR · Offline'
+              : data.recognizer === 'trocr-host'
+                ? `Offline · ${handwritingModelTier || 'TrOCR'} Handwriting`
+                : data.recognizer === 'tesseract-host'
+                  ? `Offline · ${printedModelTier || 'Tesseract'} Printed`
                 : data.recognizer === 'hybrid-host'
                   ? 'Offline · Hybrid (TrOCR + Tesseract)'
                   : 'Offline · Model Pending';
