@@ -96,6 +96,12 @@ def _make_synthetic_png(
         ("twhy", "turkey"),
         ("fr", "for"),
         ("fm", "for"),
+        ("Jolnun", "Salmon"),
+        ("Vioulli", "Broccoli"),
+        ("Vjoulli", "Broccoli"),
+        ("Viralli", "Broccoli"),
+        ("timmav", "tomorrow"),
+        ("spinod", "spinach"),
     ],
 )
 @pytest.mark.parametrize("capture_mode", ["auto", "grocery"])
@@ -108,7 +114,10 @@ def test_cursive_ligatures_and_misreads_parity(raw_word: str, expected: str, cap
 
 def test_browlli_is_not_in_lexicon_set() -> None:
     assert "browlli" not in LEXICON_SET
+    for alias in ("vioulli", "vjoulli", "viralli", "timmav", "spinod", "spinad", "jolnun"):
+        assert alias not in LEXICON_SET
     assert "broccoli" in LEXICON_SET
+    assert "tomatoes" in LEXICON_SET
 
 
 def test_build_ligature_variants_deterministic() -> None:
@@ -127,10 +136,18 @@ def test_conservative_phrases_parity(capture_mode: str) -> None:
     assert repair_conservative_phrases("as PEAS") == "asparagus"
     assert repair_conservative_phrases("As peas") == "Asparagus"
     assert repair_conservative_phrases("Pan an chocolat") == "Pain au chocolat"
+    assert repair_conservative_phrases("Panan chrolat") == "Pain au chocolat"
+    assert repair_conservative_phrases("Sundried torthel") == "Sundried tomatoes"
+    assert repair_conservative_phrases("Sundried parshel") == "Sundried tomatoes"
+    assert repair_conservative_phrases("lunch fir tomorrow") == "lunch for tomorrow"
 
     assert correct_text_with_lexicon("as PEAS", capture_mode=capture_mode) == "asparagus"
     assert correct_text_with_lexicon("As peas", capture_mode=capture_mode) == "Asparagus"
     assert correct_text_with_lexicon("Pan an chocolat", capture_mode=capture_mode) == "Pain au chocolat"
+    assert correct_text_with_lexicon("Panan chrolat", capture_mode=capture_mode) == "Pain au chocolat"
+    assert correct_text_with_lexicon("Pundried torthel", capture_mode=capture_mode) == "Sundried tomatoes"
+    assert correct_text_with_lexicon("Pundried parshel", capture_mode=capture_mode) == "Sundried tomatoes"
+    assert correct_text_with_lexicon("lunch fir tomorrow", capture_mode=capture_mode) == "lunch for tomorrow"
     assert (
         correct_text_with_lexicon("milk\neggs\nPan an chocolat", capture_mode=capture_mode)
         == "milk\neggs\nPain au chocolat"

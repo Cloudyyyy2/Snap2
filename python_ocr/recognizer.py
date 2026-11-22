@@ -11,15 +11,19 @@ import onnxruntime as ort
 from tokenizers import Tokenizer
 
 from .postprocess import (
+    LEXICON_SET,
     correct_text_with_lexicon,
+    correct_word_with_lexicon,
     detect_and_clean_hallucination,
     score_text_plausibility,
 )
 from .preprocess import (
     LineBox,
+    PreprocessResult,
+    WordCrop,
     deslant_grayscale,
     run_preprocessing,
-    segment_words_in_line,
+    segment_word_crops_in_line,
 )
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -31,7 +35,7 @@ PARSEQ_DIR = MODELS_ROOT / "parseq"
 
 DECODER_START_TOKEN_ID = 2
 EOS_TOKEN_ID = 2
-MAX_NEW_TOKENS = 64
+MAX_NEW_TOKENS = 48
 NUM_DECODER_LAYERS = 12
 NUM_HEADS = 16
 HEAD_DIM = 64
@@ -79,17 +83,31 @@ class OfflineTrOcrEngine:
 
     @staticmethod
     def _prepare_pixel_values(crop_gray: np.ndarray) -> np.ndarray:
-        """Resize line crop directly to 384x384 RGB with ViT normalization (matches preprocessor_config.json)."""
-        resized = cv2.resize(crop_gray, (384, 384), interpolation=cv2.INTER_CUBIC)
-        rgb = np.stack([resized, resized, resized], axis=0).astype(np.float32)
+        """Height-normalize crop and add horizontal white padding before 384x384 ViT resize."""
+        h, w = crop_gray.shape[:2]
+        target_h = 48
+        scale = target_h / float(max(1, h))
+        nw = max(12, min(960, int(round(w * scale))))
+        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
+        resized = cv2.resize(crop_gray, (nw, target_h), interpolation=interp)
+        right_pad = max(24, 240 - nw - 16)
+        padded = cv2.copyMakeBorder(resized, 8, 8, 16, right_pad, cv2.BORDER_CONSTANT, value=255)
+        final_384 = cv2.resize(padded, (384, 384), interpolation=cv2.INTER_CUBIC)
+        rgb = np.stack([final_384, final_384, final_384], axis=0).astype(np.float32)
         rgb = (rgb / 255.0 - 0.5) / 0.5
         return np.expand_dims(rgb, axis=0)
 
-    def recognize_line(self, crop_gray: np.ndarray) -> Tuple[str, float]:
+    def recognize_line(self, crop_gray: np.ndarray, max_new_tokens: Optional[int] = None) -> Tuple[str, float]:
         self._ensure_loaded()
         assert self._encoder is not None
         assert self._decoder is not None
         assert self._tokenizer is not None
+
+        h, w = crop_gray.shape[:2]
+        if max_new_tokens is not None:
+            eff_max_tokens = max(1, min(MAX_NEW_TOKENS, int(max_new_tokens)))
+        else:
+            eff_max_tokens = 20 if (w / float(max(1, h))) < 3.5 else MAX_NEW_TOKENS
 
         pixel_values = self._prepare_pixel_values(crop_gray)
         encoder_hidden = self._encoder.run(None, {"pixel_values": pixel_values})[0]
@@ -113,7 +131,7 @@ class OfflineTrOcrEngine:
                 (1, NUM_HEADS, 0, HEAD_DIM), dtype=np.float32
             )
 
-        for step in range(MAX_NEW_TOKENS):
+        for step in range(eff_max_tokens):
             input_ids = np.array([[generated[-1]]], dtype=np.int64)
             use_cache = np.array([step > 0], dtype=bool)
             feed: Dict[str, Any] = {
@@ -123,7 +141,18 @@ class OfflineTrOcrEngine:
                 **past_kv,
             }
             outputs = self._decoder.run(dec_output_names, feed)
-            logits = outputs[0][0, -1, :]
+            logits = outputs[0][0, -1, :].astype(np.float32, copy=True)
+
+            # Apply repetition penalty (1.1) to previously generated tokens
+            for tid in set(generated[1:]):
+                logits[tid] = logits[tid] / 1.1 if logits[tid] > 0 else logits[tid] * 1.1
+
+            # Enforce no_repeat_ngram_size = 3
+            if len(generated) >= 3:
+                tail0, tail1 = generated[-2], generated[-1]
+                for idx_prev in range(len(generated) - 2):
+                    if generated[idx_prev] == tail0 and generated[idx_prev + 1] == tail1:
+                        logits[generated[idx_prev + 2]] = -1e9
 
             max_logit = float(np.max(logits))
             exp_logits = np.exp(logits - max_logit)
@@ -238,6 +267,113 @@ def _norm_box(box: LineBox, w: int, h: int) -> Dict[str, float]:
     }
 
 
+def _accept_trocr_candidate(text: str, conf: float, box: LineBox) -> str:
+    """Gate TrOCR candidates by hallucination check, confidence floor, and short-crop prose guard."""
+    cleaned = detect_and_clean_hallucination(text)
+    if not cleaned:
+        return ""
+    if conf < 0.60:
+        return ""
+    aspect = (box.x1 - box.x0 + 1) / float(max(1, box.y1 - box.y0 + 1))
+    if aspect < 3.5 and len(cleaned.split()) >= 3:
+        return ""
+    return cleaned
+
+
+def _recognize_line_with_parseq(
+    parseq: ParseqOcrEngine, prep: PreprocessResult, box: LineBox
+) -> Tuple[str, float]:
+    """Recognize a line via PARSeq on crisp parseq_gray with speck filter, span merge, and sanity fallback."""
+    word_crops = segment_word_crops_in_line(prep.binary, prep.parseq_gray, box, pad=4)
+    if not word_crops:
+        line_slice = prep.parseq_gray[box.y0 : box.y1 + 1, box.x0 : box.x1 + 1]
+        if line_slice.size == 0:
+            return "", 0.0
+        word_crops = [
+            WordCrop(
+                crop_gray=cv2.copyMakeBorder(line_slice, 4, 4, 4, 4, cv2.BORDER_CONSTANT, value=255),
+                box=box,
+            )
+        ]
+
+    surviving: List[Tuple[WordCrop, str, float]] = []
+    for wc in word_crops:
+        wt, wc_conf = parseq.recognize_word(wc.crop_gray)
+        crop_w = wc.box.x1 - wc.box.x0 + 1
+        if (
+            not wt
+            or (not any(c.isalnum() for c in wt) and len(wt) <= 2)
+            or (crop_w < 16 and wc_conf < 0.50)
+        ):
+            continue
+        surviving.append((wc, wt, wc_conf))
+
+    if not surviving:
+        return "", 0.0
+
+    line_h = max(1, box.y1 - box.y0 + 1)
+    max_merge_gap = int(round(line_h * 0.58))
+    resolved_words: List[Tuple[str, float]] = []
+    wi = 0
+    while wi < len(surviving):
+        cur_wc, cur_txt, cur_conf = surviving[wi]
+        if wi + 1 < len(surviving):
+            nxt_wc, nxt_txt, nxt_conf = surviving[wi + 1]
+            gap = nxt_wc.box.x0 - cur_wc.box.x1 - 1
+            cur_clean = cur_txt.lower() in LEXICON_SET and len(cur_txt) >= 2
+            nxt_clean = nxt_txt.lower() in LEXICON_SET and len(nxt_txt) >= 2
+            if 0 <= gap <= max_merge_gap and (not cur_clean or not nxt_clean):
+                mx0 = max(0, min(cur_wc.box.x0, nxt_wc.box.x0))
+                my0 = max(0, min(cur_wc.box.y0, nxt_wc.box.y0))
+                mx1 = min(prep.width - 1, max(cur_wc.box.x1, nxt_wc.box.x1))
+                my1 = min(prep.height - 1, max(cur_wc.box.y1, nxt_wc.box.y1))
+                merged_slice = prep.parseq_gray[my0 : my1 + 1, mx0 : mx1 + 1]
+                if merged_slice.size > 0:
+                    merged_crop = cv2.copyMakeBorder(
+                        merged_slice, 4, 4, 4, 4, cv2.BORDER_CONSTANT, value=255
+                    )
+                    merged_txt, merged_conf = parseq.recognize_word(merged_crop)
+                    if (
+                        merged_txt
+                        and " " not in merged_txt
+                        and merged_conf >= 0.72
+                        and (
+                            (merged_txt.lower() in LEXICON_SET and len(merged_txt) >= 3)
+                            or correct_word_with_lexicon(merged_txt)[1]
+                        )
+                    ):
+                        resolved_words.append((merged_txt, merged_conf))
+                        wi += 2
+                        continue
+        resolved_words.append((cur_txt, cur_conf))
+        wi += 1
+
+    joined = " ".join(t for t, _ in resolved_words).strip()
+    mean_conf = round(float(np.mean([c for _, c in resolved_words])), 3) if resolved_words else 0.0
+
+    aspect = (box.x1 - box.x0 + 1) / float(max(1, box.y1 - box.y0 + 1))
+    if len(resolved_words) >= 2 and aspect <= 5.5:
+        no_lex_before_corr = not any(t.lower() in LEXICON_SET for t, _ in resolved_words)
+        if mean_conf < 0.78 or no_lex_before_corr:
+            full_slice = prep.parseq_gray[box.y0 : box.y1 + 1, box.x0 : box.x1 + 1]
+            if full_slice.size > 0:
+                full_crop = cv2.copyMakeBorder(
+                    full_slice, 4, 4, 4, 4, cv2.BORDER_CONSTANT, value=255
+                )
+                full_txt, full_conf = parseq.recognize_word(full_crop)
+                full_clean = detect_and_clean_hallucination(full_txt)
+                if (
+                    full_clean
+                    and full_conf >= 0.78
+                    and score_text_plausibility(full_clean, full_conf)
+                    > score_text_plausibility(joined, mean_conf)
+                ):
+                    return full_clean, full_conf
+
+    parseq_line = detect_and_clean_hallucination(joined)
+    return parseq_line, mean_conf
+
+
 def recognize_image_bytes(
     image_bytes: bytes,
     ocr_profile: str = "auto",
@@ -293,33 +429,62 @@ def recognize_image_bytes(
         crop = prep.contrast_gray[box.y0 : box.y1 + 1, box.x0 : box.x1 + 1]
         if crop.size == 0:
             continue
-        if use_deslant:
-            crop_for_trocr = deslant_grayscale(crop)
-            deslanted_count += 1
+
+        best_text = ""
+        best_conf = 0.0
+
+        if prep.detected_style == "handwriting" and parseq.is_available():
+            if use_deslant:
+                deslanted_count += 1
+            parseq_line, parseq_conf = _recognize_line_with_parseq(parseq, prep, box)
+            best_text, best_conf = parseq_line, parseq_conf
+
+            aspect = (box.x1 - box.x0 + 1) / float(max(1, box.y1 - box.y0 + 1))
+            has_wide_oov = False
+            if aspect > 4.2 and parseq_line:
+                corrected_check = correct_text_with_lexicon(parseq_line, capture_mode=capture_mode)
+                for tok in corrected_check.split():
+                    core_tok = tok.strip(".,;:!?\"'()-").lower()
+                    if len(core_tok) >= 10 and core_tok not in LEXICON_SET:
+                        has_wide_oov = True
+                        break
+
+            parseq_plaus = score_text_plausibility(parseq_line, parseq_conf) if parseq_line else 0.0
+            if trocr.is_available() and (
+                not parseq_line
+                or parseq_conf < 0.62
+                or parseq_plaus < 0.62
+                or has_wide_oov
+            ):
+                crop_for_trocr = deslant_grayscale(crop) if use_deslant else crop
+                trocr_raw, trocr_conf = trocr.recognize_line(crop_for_trocr)
+                trocr_clean = _accept_trocr_candidate(trocr_raw, trocr_conf, box)
+                if trocr_clean and (
+                    not parseq_line
+                    or score_text_plausibility(trocr_clean, trocr_conf) > parseq_plaus + 0.08
+                ):
+                    best_text, best_conf = trocr_clean, trocr_conf
         else:
-            crop_for_trocr = crop
+            if use_deslant:
+                crop_for_trocr = deslant_grayscale(crop)
+                deslanted_count += 1
+            else:
+                crop_for_trocr = cv2.copyMakeBorder(crop, 8, 8, 8, 8, cv2.BORDER_CONSTANT, value=255)
 
-        trocr_text, trocr_conf = trocr.recognize_line(crop_for_trocr)
-        trocr_text = detect_and_clean_hallucination(trocr_text)
-        best_text, best_conf = trocr_text, trocr_conf
+            if trocr.is_available():
+                trocr_raw, trocr_conf = trocr.recognize_line(crop_for_trocr)
+                trocr_clean = _accept_trocr_candidate(trocr_raw, trocr_conf, box)
+                best_text = trocr_clean
+                best_conf = trocr_conf if trocr_clean else 0.0
 
-        # Cross-check with PARSeq word-level OCR when available if TrOCR confidence/plausibility is low
-        if parseq.is_available() and (
-            score_text_plausibility(trocr_text, trocr_conf) < 0.65 or not trocr_text
-        ):
-            word_crops = segment_words_in_line(prep.binary, prep.contrast_gray, box)
-            if word_crops:
-                w_texts: List[str] = []
-                w_confs: List[float] = []
-                for wc in word_crops:
-                    wt, wc_conf = parseq.recognize_word(wc)
-                    if wt:
-                        w_texts.append(wt)
-                        w_confs.append(wc_conf)
-                parseq_line = detect_and_clean_hallucination(" ".join(w_texts))
-                parseq_conf = round(float(np.mean(w_confs)), 3) if w_confs else 0.0
-                if parseq_line and score_text_plausibility(parseq_line, parseq_conf) > score_text_plausibility(
-                    best_text, best_conf
+            if parseq.is_available() and (
+                not best_text or score_text_plausibility(best_text, best_conf) < 0.65
+            ):
+                parseq_line, parseq_conf = _recognize_line_with_parseq(parseq, prep, box)
+                if parseq_line and (
+                    not best_text
+                    or score_text_plausibility(parseq_line, parseq_conf)
+                    > score_text_plausibility(best_text, best_conf)
                 ):
                     best_text, best_conf = parseq_line, parseq_conf
 

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import base64
 import io
+import math
 from pathlib import Path
 
+import cv2
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from python_ocr.postprocess import (
     correct_grocery_context,
@@ -14,11 +18,19 @@ from python_ocr.postprocess import (
     score_text_plausibility,
 )
 from python_ocr.preprocess import (
+    LineBox,
     deslant_grayscale,
+    remove_ruled_lines,
     run_preprocessing,
+    strip_line_edge_bleeds,
     strip_spiral_and_corner_artifacts,
 )
-from python_ocr.recognizer import get_engine, get_parseq_engine, recognize_image_bytes
+from python_ocr.recognizer import (
+    _accept_trocr_candidate,
+    get_engine,
+    get_parseq_engine,
+    recognize_image_bytes,
+)
 from python_ocr.server import app
 
 
@@ -129,3 +141,209 @@ def test_python_postprocess_and_grocery_parity():
     assert "potato chip" in corrected
     assert "good platanos (green)" in corrected.lower()
     assert get_parseq_engine().is_available() in (True, False)
+
+
+def test_remove_ruled_lines_tilted_preserves_crossbars():
+    h, w = 140, 420
+    canvas = np.full((h, w), 252, dtype=np.uint8)
+    # Draw faint broken 2.4-degree tilted notebook rules (2px thick, gray ~185 -> inv ~67 <= 110)
+    slope = math.tan(math.radians(2.4))
+    for base_y in (52, 96):
+        for x in range(10, w - 10):
+            if (x % 24) < 3:
+                continue  # broken 3px rule gaps
+            y = int(round(base_y + slope * (x - w * 0.5)))
+            for dy in (0, 1):
+                if 0 <= y + dy < h:
+                    canvas[y + dy, x] = 185
+
+    # Draw dark text "butter toast" with horizontal crossbars crossing the upper rule
+    pil = Image.fromarray(canvas)
+    draw = ImageDraw.Draw(pil)
+    font = None
+    for fp in (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf"):
+        if Path(fp).is_file():
+            font = ImageFont.truetype(fp, 28)
+            break
+    draw.text((40, 28), "butter toast", fill=25, font=font)
+    img_gray = np.array(pil)
+
+    cleaned = remove_ruled_lines(img_gray)
+    # Right-side empty rule region (x > 260 around y=96) should be cleanly suppressed
+    rule_band = cleaned[85:110, 260:400]
+    assert int(np.count_nonzero(rule_band < 210)) == 0
+    # Dark ink pixels of "butter toast" (including t crossbars) should remain intact
+    text_region = cleaned[25:65, 35:230]
+    assert int(np.count_nonzero(text_region < 90)) > 180
+
+
+def test_strip_spiral_and_right_clipped_preserves_right_words():
+    h, w = 400, 440
+    binary = np.full((h, w), 255, dtype=np.uint8)
+    # Periodic left spiral coils touching x <= 3 on lower half + inset on upper half
+    for idx, cy in enumerate(range(35, 370, 36)):
+        x_start = 0 if idx >= 4 else 6
+        cv2.ellipse(binary, (x_start + 10, cy), (10, 7), 0, 0, 360, 0, 2)
+
+    # Interior main-column text row matching upper & lower bands
+    cv2.rectangle(binary, (120, 65), (260, 88), 0, -1)
+    cv2.rectangle(binary, (120, 175), (240, 198), 0, -1)
+    # Legitimate end-of-line word ("tomatoes") near right side with narrow gap to "Sundried"
+    cv2.rectangle(binary, (250, 250), (335, 274), 0, -1)  # "Sundried"
+    cv2.rectangle(binary, (355, 250), (425, 274), 0, -1)  # "tomatoes" (gap=20 < chasm)
+    # Clipped right-edge second-column fragment touching right border after wide chasm
+    cv2.rectangle(binary, (412, 175), (439, 196), 0, -1)
+
+    cleaned = strip_spiral_and_corner_artifacts(binary)
+    # Left spiral spine should be completely removed
+    assert int(np.count_nonzero(cleaned[:, :28] == 0)) == 0
+    # Clipped right-edge fragment at y=175..196 should be removed
+    assert int(np.count_nonzero(cleaned[170:202, 405:] == 0)) == 0
+    # Legitimate right-side word "tomatoes" should be preserved
+    assert int(np.count_nonzero(cleaned[250:275, 355:426] == 0)) > 100
+
+
+def test_run_preprocessing_parseq_gray_matches_binary_on_dpi_upscale():
+    img = Image.new("RGB", (480, 360), (252, 252, 252))
+    draw = ImageDraw.Draw(img)
+    # Add periodic left spiral coils
+    for cy in range(30, 340, 34):
+        draw.ellipse((2, cy - 6, 22, cy + 6), outline=(25, 25, 25), width=2)
+    # Small text (~14-18px tall) to trigger dpi_scale > 1.0
+    font = None
+    for fp in (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf"):
+        if Path(fp).is_file():
+            font = ImageFont.truetype(fp, 16)
+            break
+    for idx, text in enumerate(("bread", "milk", "eggs", "spinach")):
+        draw.text((80, 40 + idx * 60), text, fill=(20, 20, 20), font=font)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    prep = run_preprocessing(buf.getvalue(), ocr_profile="handwriting", export_stages=False)
+    assert prep.dpi_scale > 1.0
+    assert prep.parseq_gray.shape == prep.binary.shape
+    assert prep.contrast_gray.shape == prep.binary.shape
+    # Removed left spiral region must be painted white (255) on parseq_gray
+    assert int(np.count_nonzero(prep.parseq_gray[:, :24] < 200)) == 0
+
+
+def test_strip_line_edge_bleeds_removes_top_descender_preserves_core():
+    lh, lw = 48, 160
+    binary = np.full((lh, lw), 255, dtype=np.uint8)
+    # Top-border descender loop from previous line (y=0..7, cw=14, does not touch mid)
+    cv2.rectangle(binary, (22, 0), (36, 7), 0, -1)
+    # Core word strokes sitting in middle band (y=15..36)
+    cv2.rectangle(binary, (20, 15), (60, 36), 0, -1)
+    cv2.rectangle(binary, (72, 16), (125, 35), 0, -1)
+
+    mask = strip_line_edge_bleeds(binary, LineBox(x0=0, y0=0, x1=lw - 1, y1=lh - 1))
+    assert int(np.count_nonzero(mask[0:8, 22:37] == 0)) == 0
+    assert int(np.count_nonzero(mask[15:37, 20:61] == 0)) > 400
+    assert int(np.count_nonzero(mask[16:36, 72:126] == 0)) > 400
+
+
+def test_hallucination_and_plausibility_reject_trocr_prose_and_dates():
+    assert score_text_plausibility("after the success", 0.258) < 0.45
+    assert score_text_plausibility("buy milk tomorrow", 0.90) >= 0.70
+
+    for bad in (
+        "May 20 2021 May 20 2021",
+        "Cecrezo's first appearance in the Spanish Spanish",
+        "1953 Southern State",
+        "2 References",
+        "I : - :",
+        "- thu",
+        "- a m",
+        "IK - :",
+    ):
+        assert detect_and_clean_hallucination(bad) == "", f"Expected rejection for {bad!r}"
+
+    assert detect_and_clean_hallucination("buy milk tomorrow") == "buy milk tomorrow"
+    assert detect_and_clean_hallucination("- tea") == "- tea"
+
+
+def test_parseq_first_handwriting_and_span_merge(monkeypatch: pytest.MonkeyPatch):
+    # Gate checks on _accept_trocr_candidate
+    narrow_box = LineBox(x0=10, y0=10, x1=90, y1=50)  # aspect = 81/41 = 1.98 < 3.5
+    assert _accept_trocr_candidate("after the success", 0.26, narrow_box) == ""
+    assert _accept_trocr_candidate("after the success", 0.85, narrow_box) == ""  # >= 3 words on narrow crop
+    assert _accept_trocr_candidate("May 20 2021 May 20 2021", 0.92, LineBox(0, 0, 300, 40)) == ""
+    assert _accept_trocr_candidate("eggs", 0.88, narrow_box) == "eggs"
+
+    if not get_parseq_engine().is_available():
+        pytest.skip("Offline PARSeq model not present")
+
+    # Build a synthetic handwriting image with "milk" and verify PARSeq-first ignores TrOCR hallucination
+    img = Image.new("RGB", (460, 140), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    font = None
+    for fp in (r"C:\Windows\Fonts\segoepr.ttf", r"C:\Windows\Fonts\arial.ttf"):
+        if Path(fp).is_file():
+            font = ImageFont.truetype(fp, 36)
+            break
+    draw.text((40, 40), "milk", fill=(20, 20, 20), font=font)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    # Sabotage TrOCR to emit a low-conf hallucination; PARSeq-first must ignore it
+    trocr = get_engine()
+    monkeypatch.setattr(trocr, "recognize_line", lambda *_a, **_kw: ("after the success", 0.26))
+    res = recognize_image_bytes(buf.getvalue(), ocr_profile="handwriting", export_stages=False)
+    assert "after the success" not in res["text"].lower()
+    assert "milk" in res["text"].lower()
+
+    # Verify adjacent-span merge disambiguation merges split "as  paragus" -> "asparagus"
+    img_split = Image.new("RGB", (460, 140), (255, 255, 255))
+    draw_split = ImageDraw.Draw(img_split)
+    split_font = (
+        ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", 36)
+        if Path(r"C:\Windows\Fonts\arial.ttf").is_file()
+        else font
+    )
+    draw_split.text((40, 40), "as  paragus", fill=(20, 20, 20), font=split_font)
+    buf_split = io.BytesIO()
+    img_split.save(buf_split, format="PNG")
+    res_split = recognize_image_bytes(buf_split.getvalue(), ocr_profile="handwriting", export_stages=False)
+    assert "asparagus" in res_split["text"].lower()
+
+
+def test_real_notebook_grocery_list_no_hallucinations():
+    ref_image = Path(
+        r"C:\Users\paste\.gemini\antigravity\brain\a39037d9-3bf5-4972-8be5-9007b443c493\.user_uploaded\media_1795289813276_c93e39f5.jpg"
+    )
+    if not ref_image.is_file():
+        pytest.skip("External reference grocery list image not present")
+    if not get_parseq_engine().is_available():
+        pytest.skip("Offline PARSeq model not present")
+
+    res = recognize_image_bytes(ref_image.read_bytes(), ocr_profile="auto", export_stages=False)
+    text_lower = res["text"].lower()
+
+    for hallucination in (
+        "after the success",
+        "cecrezo",
+        "may 20 2021",
+        "1953 southern state",
+        "2 references",
+        "- thu",
+    ):
+        assert hallucination not in text_lower, f"Found hallucination {hallucination!r} in {res['text']!r}"
+
+    for expected in (
+        "bread",
+        "milk",
+        "crisps",
+        "eggs",
+        "lunch for tomorrow",
+        "salmon",
+        "asparagus",
+        "bacon",
+        "turkey",
+        "spinach",
+        "turkey mince",
+        "sundried tomatoes",
+    ):
+        assert expected in text_lower, f"Missing {expected!r} in {res['text']!r}"
+    assert ("pain au chocolat" in text_lower) or ("pan au chocolat" in text_lower)
+    assert ("broccoli" in text_lower) or ("brocolli" in text_lower)

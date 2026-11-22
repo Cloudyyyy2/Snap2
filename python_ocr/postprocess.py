@@ -78,7 +78,7 @@ GROCERY_CORE_WORDS: Tuple[str, ...] = (
     "fresh", "mozza", "mozzarella", "huevos", "pita", "chips", "chip", "optional",
     "kettle", "potato", "corn", "malta", "platanos", "good", "green", "milk", "eggs",
     "bread", "butter", "chicken", "beef", "pork", "fish", "rice", "pasta", "sauce",
-    "apple", "banana", "orange", "tomato", "onion", "garlic", "lettuce", "spinach",
+    "apple", "banana", "orange", "tomato", "tomatoes", "onion", "garlic", "lettuce", "spinach",
     "avocado", "broccoli", "yogurt", "cereal", "coffee", "tea", "juice", "water",
     "sugar", "salt", "pepper", "flour", "oil", "soap", "shampoo", "detergent", "towels",
 )
@@ -103,6 +103,13 @@ OCR_CONFUSION_RULES: Tuple[Tuple[re.Pattern[str], str], ...] = (
 MISREAD_ALIASES: Dict[str, str] = {
     "browlli": "broccoli",
     "virwilli": "broccoli",
+    "vioulli": "broccoli",
+    "vjoulli": "broccoli",
+    "viralli": "broccoli",
+    "timmav": "tomorrow",
+    "spinod": "spinach",
+    "spinad": "spinach",
+    "jolnun": "salmon",
 }
 
 VISUAL_CONFUSION_PAIRS = {
@@ -118,21 +125,58 @@ VISUAL_CONFUSION_PAIRS = {
 }
 
 
+_WEEKDAY_ABBRS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+_MONTH_OR_DATE_WORD_RE = re.compile(
+    r"\b(?:january|february|march|april|may|june|july|august|september|october|november|december|"
+    r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|age|birth|born)\b",
+    re.I,
+)
+_WIKI_SIDEBAR_PATTERNS = (
+    re.compile(r"related\s*changes", re.I),
+    re.compile(r"upload\s*file", re.I),
+    re.compile(r"special\s*pages", re.I),
+    re.compile(r"permanent\s*link", re.I),
+    re.compile(r"page\s*information", re.I),
+    re.compile(r"cite\s*this\s*page", re.I),
+    re.compile(r"wikidata\s*item", re.I),
+)
+
+
 def detect_and_clean_hallucination(text: str) -> str:
-    """Strip repetitive TrOCR/PARSeq decoding loops and pure symbol/digit noise."""
+    """Strip repetitive TrOCR/PARSeq decoding loops, boilerplate prose, and pure symbol/digit noise."""
     if not text:
         return ""
     cleaned_lines: List[str] = []
     for line in text.splitlines():
-        s = line.strip()
+        s = re.sub(r"^[#*_~|]+\s*", "", line.strip()).strip()
         if not s:
+            continue
+        # Reject standalone punctuation specks
+        if re.match(r"^[^A-Za-z0-9]+$", s):
             continue
         # Reject TrOCR repeating 1-3 char loops (e.g. "5858585858", "0000000000")
         if re.search(r"(.{1,3})\1{4,}", s):
             continue
-        # Reject known TrOCR empty-crop Wikipedia/Hansard/calendar hallucination boilerplate
+        # Reject sequential single-letter alphabet gibberish ("a b c d e f")
+        if re.match(r"^(?:[a-z]\s+){4,}[a-z]\b", s, re.I):
+            continue
+        # Reject zero loops ("0 000 000 000...", "7 000 000 000")
+        if re.match(r"^(?:0+\s+){4,}", s) or re.search(r"(?:^|\s)0{2,}(?:\s+0{2,}){1,}", s):
+            continue
+        # Reject known TrOCR empty-crop Wikipedia/Hansard/calendar/citation boilerplate
         if re.search(
-            r"Government of |Parliament of |Senate of |House of (?:Commons|Representatives)|Washington Post|Not logged inTalk|a b c d e f g",
+            r"Government of |Parliament of |Senate of |House of (?:Commons|Representatives)|"
+            r"Washington Post|Not logged inTalk|a b c d e f g|"
+            r"\b(?:age\s+)?the\s+age\s+of\s+birth\b|\bfirst\s+appearance\s+in\b|"
+            r"\b\d+\s+references\b|^\s*(?:references|categories)\s*$|"
+            r"\b\d{4}\s+southern\s+state\b|\b\d+(?:st|nd|rd|th)\s+century\b",
+            s,
+            re.I,
+        ):
+            continue
+        wiki_matches = sum(1 for pat in _WIKI_SIDEBAR_PATTERNS if pat.search(s))
+        if wiki_matches >= 2 or re.search(
+            r"related\s*changes|special\s*pages|permanent\s*link|page\s*information|cite\s*this\s*page|wikidata\s*item",
             s,
             re.I,
         ):
@@ -140,7 +184,73 @@ def detect_and_clean_hallucination(text: str) -> str:
         # Reject pure year-range / zero-string hallucinations ("1961 62", "0 0000", "1")
         if re.match(r"^(?:19\d{2}(?:\s+\d{2,4})*|[0\s\.\-:;,\*@#1]+)$", s):
             continue
+        # Reject repeated-year + month/birth loops ("1961 02 19 April 19 1961")
+        year_matches = re.findall(r"\b(?:19|20)\d{2}\b", s)
+        if len(year_matches) >= 2 and len(set(year_matches)) < len(year_matches) and _MONTH_OR_DATE_WORD_RE.search(s):
+            continue
+
         words = s.split()
+        # Reject 2- and 3-word date/number n-gram loops (>= 2 repeats with month/year/digit)
+        is_ngram_loop = False
+        for n in (2, 3):
+            if len(words) < n * 2:
+                continue
+            counts: Dict[str, int] = {}
+            for i in range(len(words) - n + 1):
+                gram = " ".join(words[i : i + n]).lower()
+                counts[gram] = counts.get(gram, 0) + 1
+                if counts[gram] >= 2 and (_MONTH_OR_DATE_WORD_RE.search(gram) or re.search(r"\d", gram)):
+                    is_ngram_loop = True
+                    break
+            if is_ngram_loop:
+                break
+        if is_ngram_loop:
+            continue
+
+        # Reject general 2-, 3-, and 4-word n-gram phrase loops (>= 3 repeats)
+        for n in (2, 3, 4):
+            if len(words) < n * 3:
+                continue
+            counts = {}
+            for i in range(len(words) - n + 1):
+                gram = " ".join(words[i : i + n]).lower()
+                counts[gram] = counts.get(gram, 0) + 1
+                if counts[gram] >= 3:
+                    is_ngram_loop = True
+                    break
+            if is_ngram_loop:
+                break
+        if is_ngram_loop:
+            continue
+
+        # Token diversity collapse in long outputs
+        if len(words) >= 10 and (len({w.lower() for w in words}) / len(words)) < 0.42:
+            continue
+
+        # Consecutive duplicate long-word guard alongside possessive/citation cues
+        if len(words) >= 4 and re.search(r"'s\b|\b(?:first|appearance|century|references)\b", s, re.I):
+            has_long_dup = any(
+                words[i].lower() == words[i - 1].lower() and len(re.sub(r"[^a-zA-Z]", "", words[i])) >= 5
+                for i in range(1, len(words))
+            )
+            if has_long_dup:
+                continue
+
+        # Residual symbol-junk short lines ("I : - :", "- thu", "- a m", "IK - :")
+        if len(words) >= 2 and all(sum(1 for ch in t if ch.isalnum()) <= 1 for t in words):
+            continue
+        has_symbol_tok = any(re.match(r"^[-:;.,]+$", t) for t in words)
+        if has_symbol_tok:
+            alnum_cores = [re.sub(r"[^a-zA-Z0-9]", "", t) for t in words]
+            non_empty_cores = [c for c in alnum_cores if c]
+            if non_empty_cores and all(len(c) <= 3 for c in non_empty_cores):
+                has_valid_short_lex = any(
+                    len(c) >= 2 and ((c.lower() in LEXICON_SET and c.lower() not in _WEEKDAY_ABBRS) or c.lower() in MISREAD_ALIASES)
+                    for c in non_empty_cores
+                )
+                if not has_valid_short_lex:
+                    continue
+
         deduped: List[str] = []
         repeat_run = 0
         for w in words:
@@ -158,16 +268,42 @@ def detect_and_clean_hallucination(text: str) -> str:
 
 
 def score_text_plausibility(text: str, avg_conf: float = 0.7) -> float:
-    """Estimate OCR plausibility [0..1] based on alpha ratio and lexicon hits."""
+    """Estimate OCR plausibility [0..1] based on confidence, lexicon hits, alpha ratio, and noise penalty."""
     if not text or not text.strip():
         return 0.0
-    tokens = [re.sub(r"^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$", "", t).lower() for t in text.split()]
-    tokens = [t for t in tokens if t]
+    raw_tokens = [t for t in text.split() if t]
+    if not raw_tokens:
+        return 0.0
+
+    tokens: List[str] = []
+    stray_noise = 0
+    for raw_tok in raw_tokens:
+        cleaned = re.sub(r"^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$", "", raw_tok).lower()
+        if not cleaned:
+            stray_noise += 1
+            continue
+        if len(cleaned) == 1 and not cleaned.isdigit():
+            stray_noise += 1
+        tokens.append(cleaned)
+
     if not tokens:
         return 0.0
+
     lex_hits = sum(1 for t in tokens if t in LEXICON_SET or t.isdigit())
     alpha_ratio = sum(1 for ch in text if ch.isalpha() or ch.isspace()) / max(1, len(text))
-    return round(min(1.0, 0.45 * avg_conf + 0.35 * (lex_hits / len(tokens)) + 0.20 * alpha_ratio), 3)
+    noise_penalty = min(0.35, (stray_noise / len(raw_tokens)) * 0.65)
+    low_conf_penalty = 0.12 if avg_conf < 0.70 else 0.0
+    clamped_conf = max(0.0, min(1.0, float(avg_conf)))
+    raw_score = (
+        0.50 * clamped_conf
+        + 0.35 * (lex_hits / len(tokens))
+        + 0.15 * alpha_ratio
+        - noise_penalty
+        - low_conf_penalty
+    )
+    if avg_conf < 0.50:
+        raw_score = min(raw_score, 0.44)
+    return round(max(0.0, min(1.0, raw_score)), 3)
 
 
 def damerau_levenshtein(a: str, b: str) -> int:
@@ -225,11 +361,15 @@ def build_ligature_variants(word: str) -> List[str]:
         step1[lower.replace("ndn", "ndri")] = None
     if "d" in lower:
         step1[lower.replace("d", "cl")] = None
-    if re.match(r"^vi", lower):
+    if re.match(r"^v[ij]", lower):
         step1[re.sub(r"^vi", "b", lower)] = None
+        step1[re.sub(r"^vi", "bro", lower)] = None
         step1[re.sub(r"^vir", "bro", lower)] = None
+        step1[re.sub(r"^v[ij]o?", "bro", lower)] = None
     if re.search(r"rm{1,2}w$", lower):
         step1[re.sub(r"rm{1,2}w$", "morrow", lower)] = None
+    if lower.startswith("t") and len(lower) >= 5 and re.search(r"(?:rm{1,2}w|mm[awv]|mav)$", lower):
+        step1[re.sub(r"^t[io].*(?:rm{1,2}w|mm[awv]|mav)$", "tomorrow", lower)] = None
     if "m" in lower:
         step1[lower.replace("m", "rn")] = None
 
@@ -253,8 +393,26 @@ def repair_conservative_phrases(text: str) -> str:
         flags=re.I,
     )
     out = re.sub(
-        r"\bpa(?:i?n)\s+(?:an|au)\s+chocolat\b",
+        r"\b(?:pa(?:i?n)\s+(?:an|au)|pa[nm]a?[nu]?)\s+ch[oa]{0,2}[cr]?o?lat\b",
         "Pain au chocolat",
+        out,
+        flags=re.I,
+    )
+    out = re.sub(
+        r"\bsundried\s+(?:torthel|parshel|parcel|tor[a-z]{2,5})\b",
+        "Sundried tomatoes",
+        out,
+        flags=re.I,
+    )
+    out = re.sub(
+        r"\blunch\s+(?:fir|fiy|fr|fm|fri)\s+(?:tomorrow|t[io]rm{1,2}w|timmav)\b",
+        "lunch for tomorrow",
+        out,
+        flags=re.I,
+    )
+    out = re.sub(
+        r"\b(?:halkey|h[iu]p[ae]y|h[ao]tey|anpey|awbey)\s+mince\b",
+        "turkey mince",
         out,
         flags=re.I,
     )
@@ -344,7 +502,7 @@ def correct_word_with_lexicon(raw_word: str, max_distance: int | None = None) ->
                 continue
 
         for obs in variants:
-            if len(obs) >= 7:
+            if len(obs) >= 6:
                 eff_max = max(eff_max_outer, 3)
             elif len(obs) >= 5 and len(dict_word) > len(obs):
                 eff_max = 3
@@ -376,7 +534,13 @@ def correct_word_with_lexicon(raw_word: str, max_distance: int | None = None) ->
                 best_cand = dict_word
 
     starts_match = best_cand is not None and (
-        best_cand[0] == lower[0] or any(v[0] == best_cand[0] for v in variants)
+        best_cand[0] == lower[0]
+        or any(v[0] == best_cand[0] for v in variants)
+        or (
+            (len(lower) >= 6 or (not is_cap and len(lower) >= 5))
+            and best_w <= 1.5
+            and (lower[0], best_cand[0]) in VISUAL_CONFUSION_PAIRS
+        )
     )
     ends_match = best_cand is not None and best_cand[-1] == lower[-1]
     compressed_cursive_ok = (
@@ -435,6 +599,7 @@ def correct_grocery_context(text: str) -> str:
         (r"\btimatrel\b", "tomatoes"),
         (r"\bvirwilli\b", lambda m: _match_case(m.group(0), "broccoli")),
         (r"\bbrowlli\b", lambda m: _match_case(m.group(0), "broccoli")),
+        (r"\bspin[oa]d\b", lambda m: _match_case(m.group(0), "spinach")),
         (r"\bhalkey\b", "turkey"),
         (r"\bbatm\b", "bacon"),
         (r"\baspornus\b", "asparagus"),
