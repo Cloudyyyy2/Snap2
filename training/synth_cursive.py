@@ -94,8 +94,20 @@ ISSUE_PROFILES: Tuple[str, ...] = (
     "shadow_gradient",
     "motion_blur",
     "broken_strokes",
+    "missing_letter_pixels",
+    "eroded_thin_letters",
     "adjacent_bleed",
     "spiral_edge",
+)
+
+# Words covering every letter a-z so every cursive letter gets missing-pixel training samples
+ALPHABET_COVERAGE_WORDS: Tuple[str, ...] = (
+    "avocado", "broccoli", "cilantro", "doughnut", "eggplant", "focaccia",
+    "garlic", "hummus", "icing", "jalapeno", "kombucha", "lettuce",
+    "mozzarella", "noodles", "oregano", "parmesan", "quinoa", "rosemary",
+    "spinach", "tomatoes", "udon", "vinaigrette", "watermelon", "xanthan",
+    "yogurt", "zucchini", "jazz", "quartz", "fizz", "wax", "box", "extra",
+    "123", "456", "789", "2026", "500g", "2kg", "12oz",
 )
 
 
@@ -211,6 +223,46 @@ def render_cursive_sample(text: str, font_path: Path, rng: random.Random, issue:
             ry = rng.randint(pad_y, max(pad_y + 2, h - pad_y))
             arr[max(0, ry - 1) : min(h, ry + 2), max(0, rx - 1) : min(w, rx + 2)] = paper_val
 
+    # Targeted per-letter missing pixels (simulates pen skips / thresholding gaps inside specific letters)
+    if issue == "missing_letter_pixels":
+        ink_mask = arr < (paper_val - 28)
+        ink_ys, ink_xs = np.where(ink_mask)
+        if len(ink_xs) >= 12:
+            x_min, x_max = int(ink_xs.min()), int(ink_xs.max())
+            span = max(1, x_max - x_min + 1)
+            n_letters = max(1, len(text.replace(" ", "")))
+            letter_w = max(6, span // n_letters)
+            # Pick 1 to 3 letter slots to drop pixels from
+            num_slots = min(n_letters, rng.randint(1, 3))
+            chosen_slots = rng.sample(range(n_letters), num_slots)
+            for slot in chosen_slots:
+                sx0 = x_min + slot * letter_w
+                sx1 = min(w - 1, sx0 + letter_w)
+                slot_idx = np.where((ink_xs >= sx0) & (ink_xs <= sx1))[0]
+                if len(slot_idx) == 0:
+                    continue
+                # Erase 3 to 7 small 2x2 / 3x1 patches directly on that letter's ink strokes
+                n_patches = min(len(slot_idx), rng.randint(3, 7))
+                picks = rng.sample(list(slot_idx), n_patches)
+                for pi in picks:
+                    py, px = int(ink_ys[pi]), int(ink_xs[pi])
+                    pw = rng.choice([1, 2, 3])
+                    ph = rng.choice([1, 2])
+                    arr[max(0, py) : min(h, py + ph), max(0, px) : min(w, px + pw)] = paper_val
+
+    # Eroded thin cursive hairlines + scattered micro-gaps across the whole word
+    if issue == "eroded_thin_letters":
+        # Light dilation on light-paper image thins dark ink strokes
+        if rng.random() < 0.7:
+            arr = cv2.dilate(arr, np.ones((2, 2), dtype=np.uint8), iterations=1)
+        ink_ys, ink_xs = np.where(arr < (paper_val - 25))
+        if len(ink_xs) >= 10:
+            drop_n = max(4, int(len(ink_xs) * rng.uniform(0.08, 0.22)))
+            picks = rng.sample(range(len(ink_xs)), min(drop_n, len(ink_xs)))
+            for pi in picks:
+                py, px = int(ink_ys[pi]), int(ink_xs[pi])
+                arr[py, px] = paper_val
+
     # Shadow gradient (harsh uneven phone lighting)
     if issue == "shadow_gradient":
         grad_x = np.linspace(rng.uniform(-55, -20), rng.uniform(10, 35), w, dtype=np.float32)
@@ -249,25 +301,34 @@ def generate_dataset(out_dir: Path, count: int, seed: int = 42, fonts_dir: Path 
     img_dir.mkdir(parents=True, exist_ok=True)
 
     rows: List[str] = ["rel_path\tlabel\tsource\twriter_id"]
+    # Guarantee every letter a-z, A-Z, and 0-9 gets missing-pixel & thin-eroded cursive samples
+    guaranteed_items: List[Tuple[str, str]] = []
+    for w_cov in ALPHABET_COVERAGE_WORDS:
+        guaranteed_items.append((w_cov.lower(), "missing_letter_pixels"))
+        guaranteed_items.append((w_cov.capitalize(), "eroded_thin_letters"))
+
     for idx in range(count):
         font_path = rng.choice(fonts)
-        issue = ISSUE_PROFILES[idx % len(ISSUE_PROFILES)]
-        # 75% single words (PARSeq word crops), 25% 2-word phrases
-        if rng.random() < 0.75:
-            text = rng.choice(vocab)
+        if idx < len(guaranteed_items):
+            text, issue = guaranteed_items[idx]
         else:
-            text = f"{rng.choice(vocab)} {rng.choice(vocab)}"
-            if len(text) > 22:
+            issue = ISSUE_PROFILES[idx % len(ISSUE_PROFILES)]
+            # 75% single words (PARSeq word crops), 25% 2-word phrases
+            if rng.random() < 0.75:
                 text = rng.choice(vocab)
+            else:
+                text = f"{rng.choice(vocab)} {rng.choice(vocab)}"
+                if len(text) > 22:
+                    text = rng.choice(vocab)
 
-        # Randomize realistic casing (lowercase, Capitalized, ALL CAPS)
-        r_case = rng.random()
-        if r_case < 0.55:
-            text = text.lower()
-        elif r_case < 0.92:
-            text = text[0].upper() + text[1:].lower()
-        else:
-            text = text.upper()
+            # Randomize realistic casing (lowercase, Capitalized, ALL CAPS)
+            r_case = rng.random()
+            if r_case < 0.55:
+                text = text.lower()
+            elif r_case < 0.92:
+                text = text[0].upper() + text[1:].lower()
+            else:
+                text = text.upper()
 
         img = render_cursive_sample(text, font_path, rng, issue=issue)
         fname = f"synth_{idx:06d}.png"

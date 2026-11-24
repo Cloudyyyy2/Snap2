@@ -1,196 +1,181 @@
 rel_path	label	source	writer_id
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000009.png	platanos	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000033.png	store	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000079.png	amount	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000085.png	ham	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000086.png	Bills answer	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000108.png	despite	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000134.png	Pecans	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000174.png	sunday	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000188.png	cranberry	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000198.png	write	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000213.png	follow	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000223.png	Phone	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000254.png	chicken breast	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000299.png	Nachos night	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000310.png	Ahead	synth_clean_cursive	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000314.png	yet yes	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000329.png	vote	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000341.png	join	synth_ruled_notebook	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000403.png	sourdough	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000426.png	free	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000453.png	present	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000458.png	Concern	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000467.png	employee	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000505.png	Sweet	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000512.png	contain	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000521.png	big	synth_ruled_notebook	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000525.png	Cheese urgent	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000537.png	magazine	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000570.png	Work	synth_clean_cursive	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000580.png	An	synth_clean_cursive	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000585.png	treatment	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000593.png	president which	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000596.png	Asparagus	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000648.png	coleslaw	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000654.png	off	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000662.png	moment section	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000684.png	HOUR	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000693.png	YET	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000698.png	DEGREE	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000704.png	STREET	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000782.png	Leeks	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000783.png	choice	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000794.png	Lobster	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000798.png	potato	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000805.png	exactly	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000806.png	Walnuts yoghurt	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000814.png	veal	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000857.png	Apricot yes	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000871.png	parsley	synth_ruled_notebook	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000877.png	voice	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000883.png	Claim	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000886.png	Shampoo	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000896.png	large broth	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000902.png	Safe	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000913.png	Which entire	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000942.png	figs	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000947.png	situation pecans	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000948.png	General	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000984.png	taco	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000987.png	Shredded	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000988.png	attention	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001010.png	raspberry	synth_clean_cursive	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001029.png	father	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001031.png	Population	synth_ruled_notebook	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001048.png	Remember	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001065.png	WE	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001066.png	SOUTHERN	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001078.png	pear plant	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001079.png	final	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001107.png	run	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001124.png	natural	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001125.png	save	synth_shadow_gradient	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001126.png	different	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001164.png	forward	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001167.png	bring drug	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001198.png	Blueberry	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001207.png	venison or	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001230.png	GUACAMOLE	synth_clean_cursive	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001256.png	mexican	synth_motion_blur	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001262.png	subject sauerkraut	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001264.png	Point	synth_thick_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001282.png	bit	synth_heavy_slant	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001290.png	electric	synth_clean_cursive	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001343.png	establish	synth_faint_ink	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001349.png	low	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001377.png	dream	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001381.png	Where	synth_ruled_notebook	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001407.png	Where	synth_broken_strokes	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001428.png	situation	synth_adjacent_bleed	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001459.png	up	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001489.png	back	synth_spiral_edge	font_frscript
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000006.png	Large	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000008.png	softener	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000015.png	Sriracha	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000019.png	egg	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000024.png	century	synth_thick_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000031.png	word	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000039.png	Dressing	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000042.png	Accept	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000043.png	almost	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000066.png	Graham	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000071.png	Talk	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000082.png	Kale	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000084.png	cake pepper	synth_thick_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000096.png	Pastry mayonnaise	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000127.png	give	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000128.png	choice	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000218.png	right utilities	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000238.png	day	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000287.png	make	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000291.png	state	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000296.png	everybody	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000297.png	Expert	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000301.png	Go	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000317.png	laundry	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000322.png	Figs	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000331.png	question	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000345.png	five	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000358.png	eye	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000384.png	Value	synth_thick_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000397.png	set	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000457.png	Email minute	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000461.png	across military	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000473.png	Charge	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000493.png	pears	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000502.png	Eat	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000510.png	nature either	synth_clean_cursive	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000528.png	FLAXSEED	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000551.png	News	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000559.png	cashews	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000577.png	range croutons	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000603.png	PRICE	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000609.png	IF QUICKLY	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000621.png	tarragon	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000623.png	submit	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000631.png	organization	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000636.png	quickly	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000661.png	Hang pancakes	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000675.png	Peppercorn	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000689.png	Each	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000713.png	Employee help	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000737.png	fish better	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000755.png	SLICED	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000762.png	coffee flax	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000768.png	Blueberry	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000778.png	Turkey mince	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000788.png	YAMS HANG	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000808.png	conference	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000858.png	zest	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000904.png	build	synth_thick_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000931.png	Mother	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000932.png	BUN	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000945.png	protect	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000953.png	yourself	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000956.png	she	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000958.png	stock	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000979.png	Lay	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001053.png	POPULATION	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001101.png	energy shred	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001106.png	evening	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001111.png	Security	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001131.png	Cherry fund	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001146.png	rich	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001152.png	Major	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001163.png	Fresh	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001180.png	Inside	synth_clean_cursive	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001185.png	met thought	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001187.png	holy hundred	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001191.png	brussels electrician	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001193.png	NOW DRUG	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001210.png	care beef	synth_clean_cursive	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001215.png	method shortening	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001235.png	nor purpose	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001248.png	Push	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001249.png	soy	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001271.png	DOUGH	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001284.png	Memory streaky bacon	synth_thick_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001293.png	build	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001335.png	Chicken breast move	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001337.png	mince fresh	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001350.png	shred page	synth_clean_cursive	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001353.png	Soup	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001355.png	PROBLEM	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001396.png	Loss laundry	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001401.png	VEGAN	synth_ruled_notebook	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001406.png	SEMOLINA	synth_motion_blur	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001420.png	Drinks	synth_clean_cursive	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001423.png	cookies	synth_faint_ink	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001439.png	since	synth_spiral_edge	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001444.png	he	synth_thick_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001452.png	week	synth_heavy_slant	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001455.png	weight	synth_shadow_gradient	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001457.png	movie	synth_broken_strokes	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001468.png	cost	synth_adjacent_bleed	font_scriptbl
-C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001497.png	Sausages marshmallow	synth_broken_strokes	font_scriptbl
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000014.png	hummus	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000046.png	xanthan	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000066.png	456	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000071.png	2026	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000072.png	500g	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000086.png	Two	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000087.png	busy	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000088.png	cookies	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000095.png	water	synth_spiral_edge	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000105.png	building sauce	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000114.png	Similar	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000118.png	too cell	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000122.png	information	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000125.png	SOMEONE	synth_shadow_gradient	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000126.png	throw	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000133.png	refund	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000134.png	account	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000140.png	leeks	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000143.png	Off	synth_spiral_edge	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000189.png	Pinto	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000191.png	Spaghetti	synth_spiral_edge	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000225.png	Olives	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000237.png	plantain	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000238.png	Sunflower die	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000256.png	During	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000269.png	NOODLE	synth_shadow_gradient	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000278.png	horseradish	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000283.png	safe	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000297.png	cloves	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000303.png	chocolat	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000306.png	WRITER EMPANADA	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000320.png	avoid	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000326.png	WIN	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000330.png	Machine	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000361.png	ribeye production	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000366.png	Mozza	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000369.png	Party electric	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000378.png	behavior throw	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000389.png	Flax horseradish	synth_shadow_gradient	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000516.png	mussels	synth_clean_cursive	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000526.png	wipes	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000577.png	ribeye	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000595.png	Include	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000616.png	drive	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000632.png	Flax myself	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000635.png	because trouble	synth_spiral_edge	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000649.png	Natural	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000655.png	November	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000658.png	thank	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000694.png	Result	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000696.png	under	synth_clean_cursive	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000709.png	President	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000715.png	Deep	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000718.png	own	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000724.png	difference	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000766.png	method	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000784.png	blue late	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000820.png	love	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000842.png	site	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000856.png	WIN NOTHING	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000873.png	Candidate seltzer	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000876.png	Those when	synth_clean_cursive	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000915.png	Olives	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000957.png	graham	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000961.png	start	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001013.png	Kimchi	synth_shadow_gradient	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001059.png	Sell	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001087.png	VIEW	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001088.png	know	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001094.png	opportunity thing	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001101.png	Continue	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001105.png	Breakfast	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001106.png	Personal ok	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001124.png	official	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001131.png	Full	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001170.png	Why model	synth_motion_blur	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001172.png	relate	synth_missing_letter_pixels	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001176.png	cake	synth_clean_cursive	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001186.png	wear	synth_adjacent_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001197.png	those	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001203.png	Policy	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001226.png	Fight	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001231.png	malta spring	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001255.png	grapes	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001289.png	Lemon	synth_shadow_gradient	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001323.png	SOUND	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001335.png	Dark	synth_faint_ink	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001372.png	Cumin	synth_thick_bleed	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001381.png	donut	synth_ruled_notebook	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001382.png	Cost	synth_heavy_slant	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001389.png	tomatoes	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001391.png	option	synth_spiral_edge	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001401.png	FOCUS	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001411.png	melon	synth_broken_strokes	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001440.png	Beef	synth_clean_cursive	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001497.png	Success	synth_eroded_thin_letters	font_vivaldii
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000009.png	Eggplant	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000011.png	Focaccia	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000013.png	Garlic	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000032.png	quinoa	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000082.png	Participant	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000091.png	relate	synth_broken_strokes	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000094.png	reality	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000128.png	Mint	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000148.png	than	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000159.png	flour	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000173.png	ham	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000177.png	Victim	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000186.png	Character months	synth_motion_blur	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000192.png	figure	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000196.png	Enough	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000201.png	type	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000221.png	Tuition manager	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000228.png	likely	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000244.png	Challenge	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000305.png	Strawberry cracker	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000345.png	Bagels	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000346.png	salsa	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000355.png	Renew	synth_broken_strokes	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000404.png	MANDARIN SIMILAR	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000414.png	SIZE	synth_motion_blur	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000421.png	Admit	synth_ruled_notebook	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000458.png	Sparkling	synth_heavy_slant	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000509.png	tax	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000539.png	Baking	synth_spiral_edge	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000540.png	wonder	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000556.png	Fast	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000564.png	Feel	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000571.png	Though	synth_broken_strokes	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000593.png	Apple	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000614.png	two	synth_heavy_slant	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000646.png	We	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000647.png	again	synth_spiral_edge	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000687.png	Seltzer	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000700.png	skim	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000712.png	almost	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000717.png	Leave	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000744.png	onions	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000765.png	Accept	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000788.png	major	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000799.png	Parchment	synth_broken_strokes	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000810.png	Tacos civil	synth_motion_blur	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000814.png	Hamburger	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000835.png	Death	synth_broken_strokes	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000841.png	step	synth_ruled_notebook	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000881.png	Build	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000888.png	Price	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000897.png	october	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000911.png	OPERATION CLEANER	synth_spiral_edge	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000938.png	Trial	synth_heavy_slant	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000960.png	FRIES	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_000999.png	hand social	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001011.png	six	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001014.png	early	synth_motion_blur	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001019.png	artichoke	synth_spiral_edge	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001021.png	account face	synth_ruled_notebook	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001040.png	economic	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001043.png	About ramen	synth_spiral_edge	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001045.png	barley	synth_ruled_notebook	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001051.png	renew	synth_broken_strokes	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001064.png	Catfish	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001081.png	wait truffle	synth_ruled_notebook	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001138.png	Clementine	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001204.png	Receive mustard	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001217.png	Rib	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001228.png	meet thought	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001264.png	class	synth_thick_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001269.png	Peppers raise	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001299.png	zest	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001301.png	Add cucumber	synth_shadow_gradient	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001310.png	peas	synth_heavy_slant	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001328.png	Chili	synth_missing_letter_pixels	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001347.png	WITHOUT	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001354.png	Ciabatta	synth_adjacent_bleed	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001356.png	draw	synth_clean_cursive	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001365.png	Everybody	synth_eroded_thin_letters	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001395.png	electric religious	synth_faint_ink	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001406.png	MILITARY	synth_heavy_slant	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001434.png	CORNSTARCH	synth_motion_blur	font_mvboli
+C:/Users/paste/Documents/Snap2/Snap2/training/dataset/synth/images/synth_001499.png	rise shortbread	synth_spiral_edge	font_mvboli
