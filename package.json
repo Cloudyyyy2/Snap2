@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit",
     "models:handwriting": "node scripts/download-models.mjs",
     "sync:lexicon": "tsx scripts/sync-lexicon.ts",
+    "dataset:build": ".venv\\Scripts\\python.exe training\\synth_cursive.py --count 1500 --out training\\dataset\\synth && .venv\\Scripts\\python.exe training\\dataset_builder.py --out training\\dataset\\splits",
     "test:unit": "vitest run",
     "test:python": ".venv\\Scripts\\python.exe -m pytest python_ocr\\tests -v"
   },

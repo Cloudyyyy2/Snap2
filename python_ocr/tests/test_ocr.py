@@ -382,3 +382,13 @@ def test_grocery_autocorrect_prevents_false_swaps_in_auto_mode():
     assert "pain au chocolat" in lower
     assert lower.count("lunch for tomorrow") == 2
     assert lower.count("sundried tomatoes") == 2
+
+
+def test_grocery_lexicon_json_is_actively_loaded():
+    """Verify python_ocr/grocery_lexicon.json is loaded into GROCERY_CORE_WORDS at runtime."""
+    from python_ocr.postprocess import GROCERY_CORE_SET
+
+    assert len(GROCERY_CORE_SET) >= 400
+    for item in ("zucchini", "quinoa", "sriracha", "croissant", "cilantro", "avocados"):
+        assert item in GROCERY_CORE_SET
+    assert "zucchini" in correct_text_with_lexicon("milk\neggs\nzuchini", capture_mode="auto").lower()

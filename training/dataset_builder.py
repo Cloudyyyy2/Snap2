@@ -81,18 +81,16 @@ def build_splits(
         test_rows = shuffled[n_train + n_val :]
     else:
         total = len(all_rows)
-        target_train = int(round(total * train_ratio))
-        target_val = int(round(total * val_ratio))
+        target_test = max(1, int(round(total * (1.0 - train_ratio - val_ratio))))
+        target_val = max(1, int(round(total * val_ratio)))
         for w in writers:
             group = by_writer[w]
-            if len(train_rows) < target_train:
-                train_rows.extend(group)
+            if len(test_rows) < target_test:
+                test_rows.extend(group)
             elif len(val_rows) < target_val:
                 val_rows.extend(group)
             else:
-                test_rows.extend(group)
-        if not test_rows and len(val_rows) > 1:
-            test_rows.append(val_rows.pop())
+                train_rows.extend(group)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     counts: Dict[str, int] = {}

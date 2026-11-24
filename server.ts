@@ -413,9 +413,10 @@ app.post('/api/training/save-sample', async (req, res) => {
 
     fs.writeFileSync(dstPath, cropBytes);
     if (!fs.existsSync(manifestPath)) {
-      fs.writeFileSync(manifestPath, 'rel_path\tlabel\tsource\twriter_id\n', 'utf-8');
+      fs.writeFileSync(manifestPath, 'rel_path\tlabel\tsource\twriter_id\toriginal_text\n', 'utf-8');
     }
-    const row = `images/${fname}\t${cleanLabel}\tsnap2_real\t${safeDir}\n`;
+    const cleanOrig = typeof originalText === 'string' ? originalText.replace(/[\r\n\t]+/g, ' ').trim() : '';
+    const row = `images/${fname}\t${cleanLabel}\tsnap2_real\t${safeDir}\t${cleanOrig}\n`;
     fs.appendFileSync(manifestPath, row, 'utf-8');
 
     res.json({

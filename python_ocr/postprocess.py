@@ -57,8 +57,8 @@ _BASE_LEXICON_WORDS: Tuple[str, ...] = (
     "shall", "needs", "needed", "wants", "wanted", "nine",
 )
 
-def _load_compact_lexicon() -> Tuple[str, ...]:
-    path = Path(__file__).resolve().parent / "compact_lexicon.json"
+def _load_json_wordlist(filename: str) -> Tuple[str, ...]:
+    path = Path(__file__).resolve().parent / filename
     if path.is_file():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -69,10 +69,15 @@ def _load_compact_lexicon() -> Tuple[str, ...]:
     return ()
 
 
-LEXICON_WORDS: Tuple[str, ...] = tuple(dict.fromkeys((*_BASE_LEXICON_WORDS, *_load_compact_lexicon())))
-LEXICON_SET = set(LEXICON_WORDS)
+def _load_compact_lexicon() -> Tuple[str, ...]:
+    return _load_json_wordlist("compact_lexicon.json")
 
-GROCERY_CORE_WORDS: Tuple[str, ...] = (
+
+def _load_grocery_lexicon() -> Tuple[str, ...]:
+    return _load_json_wordlist("grocery_lexicon.json")
+
+
+_BASE_GROCERY_CORE_WORDS: Tuple[str, ...] = (
     "whip", "cream", "dryer", "sheets", "children", "toothpaste", "mexican", "cheese",
     "parmesan", "shred", "shredded", "gouda", "cracker", "barrel", "cheddar", "pan",
     "fresh", "mozza", "mozzarella", "huevos", "pita", "chips", "chip", "optional",
@@ -87,7 +92,55 @@ GROCERY_CORE_WORDS: Tuple[str, ...] = (
     "oatmeal", "granola", "bagels", "bagel", "croissant", "muffin", "hummus", "salsa",
     "cilantro", "basil", "ginger", "lemon", "lime", "noodles", "olives", "mushrooms",
 )
+GROCERY_CORE_WORDS: Tuple[str, ...] = tuple(dict.fromkeys((*_BASE_GROCERY_CORE_WORDS, *_load_grocery_lexicon())))
 GROCERY_CORE_SET = set(GROCERY_CORE_WORDS)
+
+LEXICON_WORDS: Tuple[str, ...] = tuple(
+    dict.fromkeys((*_BASE_LEXICON_WORDS, *_load_compact_lexicon(), *GROCERY_CORE_WORDS))
+)
+LEXICON_SET = set(LEXICON_WORDS)
+
+# Live offline feedback dataset cache (training/dataset/real/labels.tsv)
+_REAL_DATASET_MTIME: float = -1.0
+_REAL_DATASET_ALIASES: Dict[str, str] = {}
+_REAL_DATASET_WORDS: set[str] = set()
+
+
+def _refresh_real_feedback_dataset() -> None:
+    """Reload user-corrected ground-truth labels/aliases from training/dataset/real/labels.tsv if updated."""
+    global _REAL_DATASET_MTIME, _REAL_DATASET_ALIASES, _REAL_DATASET_WORDS
+    labels_path = Path(__file__).resolve().parent.parent / "training" / "dataset" / "real" / "labels.tsv"
+    if not labels_path.is_file():
+        return
+    try:
+        mtime = labels_path.stat().st_mtime
+        if mtime == _REAL_DATASET_MTIME:
+            return
+        aliases: Dict[str, str] = {}
+        words: set[str] = set()
+        for idx, line in enumerate(labels_path.read_text(encoding="utf-8").splitlines()):
+            if idx == 0 and line.lower().startswith("rel_path\t"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            label = parts[1].strip()
+            for tok in re.findall(r"[A-Za-z]{3,}", label):
+                words.add(tok.lower())
+            if len(parts) >= 5:
+                orig = parts[4].strip()
+                orig_toks = re.findall(r"[A-Za-z]+", orig)
+                lbl_toks = re.findall(r"[A-Za-z]+", label)
+                if len(orig_toks) == 1 and len(lbl_toks) == 1:
+                    o_low = orig_toks[0].lower()
+                    l_low = lbl_toks[0].lower()
+                    if o_low != l_low and len(o_low) >= 3 and o_low not in LEXICON_SET:
+                        aliases[o_low] = l_low
+        _REAL_DATASET_ALIASES = aliases
+        _REAL_DATASET_WORDS = words
+        _REAL_DATASET_MTIME = mtime
+    except Exception:
+        pass
 
 # Common non-grocery context words that must never be overwritten by grocery snapping
 _NON_GROCERY_PROTECTED = {
@@ -482,8 +535,11 @@ def correct_word_with_lexicon(raw_word: str, max_distance: int | None = None) ->
     if re.match(r"^\$?\d+([.:]\d+)?(am|pm)?$", core, re.I):
         return raw_word, False
 
-    if lower in LEXICON_SET:
+    if lower in LEXICON_SET or lower in _REAL_DATASET_WORDS:
         return raw_word, False
+
+    if lower in _REAL_DATASET_ALIASES:
+        return f"{prefix}{_match_case(core, _REAL_DATASET_ALIASES[lower])}{suffix}", True
 
     if lower in MISREAD_ALIASES:
         return f"{prefix}{_match_case(core, MISREAD_ALIASES[lower])}{suffix}", True
@@ -700,6 +756,7 @@ def correct_grocery_context(text: str) -> str:
 def correct_text_with_lexicon(raw_text: str, capture_mode: str = "auto") -> str:
     if not raw_text or not raw_text.strip():
         return raw_text
+    _refresh_real_feedback_dataset()
     lines_out: List[str] = []
     for line in raw_text.splitlines():
         repaired_line = repair_conservative_phrases(line)
