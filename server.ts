@@ -5,6 +5,7 @@ import { createRequire } from 'module';
 import type webpushType from 'web-push';
 import dotenv from 'dotenv';
 import { spawn, ChildProcess } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
@@ -366,6 +367,66 @@ app.post('/api/local-ocr', async (req, res) => {
       success: false,
       error: error?.message || 'Failed to process image with local Python OCR.',
     });
+  }
+});
+
+// Automatic offline training dataset collector (saves user-corrected OCR line crops locally)
+app.post('/api/training/save-sample', async (req, res) => {
+  try {
+    const { exportDirName, lineIndex, originalText, correctedText } = req.body || {};
+    const cleanLabel = typeof correctedText === 'string' ? correctedText.replace(/[\r\n\t]+/g, ' ').trim() : '';
+    if (!cleanLabel) {
+      return res.status(400).json({ success: false, error: 'correctedText is required' });
+    }
+    const safeDir = typeof exportDirName === 'string' ? path.basename(exportDirName.trim()) : '';
+    const idxNum = typeof lineIndex === 'number' && Number.isInteger(lineIndex) && lineIndex >= 0 ? lineIndex : -1;
+    if (!safeDir || idxNum < 0) {
+      return res.json({ success: true, saved: false, reason: 'missing-line-crop-reference' });
+    }
+
+    const lineNumStr = String(idxNum + 1).padStart(2, '0');
+    const srcCropPath = path.join(process.cwd(), 'ocr-exports', safeDir, `06_line_${lineNumStr}.png`);
+    if (!fs.existsSync(srcCropPath)) {
+      return res.json({ success: true, saved: false, reason: 'crop-not-found' });
+    }
+
+    const cropBytes = fs.readFileSync(srcCropPath);
+    const hash = crypto
+      .createHash('sha256')
+      .update(cropBytes)
+      .update('|')
+      .update(cleanLabel)
+      .digest('hex')
+      .slice(0, 12);
+
+    const realDir = path.join(process.cwd(), 'training', 'dataset', 'real');
+    const imagesDir = path.join(realDir, 'images');
+    fs.mkdirSync(imagesDir, { recursive: true });
+
+    const fname = `real_${hash}.png`;
+    const dstPath = path.join(imagesDir, fname);
+    const manifestPath = path.join(realDir, 'labels.tsv');
+
+    if (fs.existsSync(dstPath)) {
+      return res.json({ success: true, saved: false, duplicate: true, file: `images/${fname}` });
+    }
+
+    fs.writeFileSync(dstPath, cropBytes);
+    if (!fs.existsSync(manifestPath)) {
+      fs.writeFileSync(manifestPath, 'rel_path\tlabel\tsource\twriter_id\n', 'utf-8');
+    }
+    const row = `images/${fname}\t${cleanLabel}\tsnap2_real\t${safeDir}\n`;
+    fs.appendFileSync(manifestPath, row, 'utf-8');
+
+    res.json({
+      success: true,
+      saved: true,
+      file: `images/${fname}`,
+      originalText: typeof originalText === 'string' ? originalText : undefined,
+    });
+  } catch (error: any) {
+    console.error('Error saving training sample:', error);
+    res.status(500).json({ success: false, error: error?.message || 'Failed to save training sample' });
   }
 });
 

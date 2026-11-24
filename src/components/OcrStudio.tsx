@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   RotateCcw,
   Sparkles,
@@ -124,6 +124,11 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
 
   const [scanMeta, setScanMeta] = useState<ScanExtractionMeta | null>(null);
   const [editableText, setEditableText] = useState('');
+  const lastScanTrainingCtxRef = useRef<{
+    exportDirName?: string;
+    originalLines: string[];
+  } | null>(null);
+  const savedTrainingKeysRef = useRef<Set<string>>(new Set());
   const [promptText, setPromptText] = useState('');
   const [draft, setDraft] = useState<DraftReminderState | null>(null);
   const [newStepText, setNewStepText] = useState('');
@@ -132,6 +137,39 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
   const [showWordSquares, setShowWordSquares] = useState(false);
 
   const [recentScans, setRecentScans] = useState<RecentScanItem[]>(() => getStoredRecentScans());
+
+  useEffect(() => {
+    const ctx = lastScanTrainingCtxRef.current;
+    if (!ctx?.exportDirName || !editableText.trim()) return;
+
+    const timer = window.setTimeout(() => {
+      const editedLines = editableText.split('\n');
+      const maxCheck = Math.min(editedLines.length, ctx.originalLines.length);
+      for (let i = 0; i < maxCheck; i += 1) {
+        const orig = (ctx.originalLines[i] || '').trim();
+        const curr = (editedLines[i] || '').trim();
+        if (!curr || curr === orig) continue;
+        const key = `${ctx.exportDirName}:${i}:${curr}`;
+        if (savedTrainingKeysRef.current.has(key)) continue;
+        savedTrainingKeysRef.current.add(key);
+
+        void fetch('/api/training/save-sample', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            exportDirName: ctx.exportDirName,
+            lineIndex: i,
+            originalText: orig,
+            correctedText: curr,
+          }),
+        }).catch(() => {
+          // Non-blocking background dataset capture
+        });
+      }
+    }, 1500);
+
+    return () => window.clearTimeout(timer);
+  }, [editableText]);
 
   useEffect(() => {
     onSheetOpenChange?.(reviewSheetOpen);
@@ -515,6 +553,10 @@ export const OcrStudio: React.FC<OcrStudioProps> = ({
               : undefined;
 
           setEditableText(extractedText);
+          lastScanTrainingCtxRef.current = {
+            exportDirName: typeof data.exportDirName === 'string' ? data.exportDirName : undefined,
+            originalLines: extractedText ? extractedText.split('\n') : [],
+          };
           setScanMeta({
             linesCount: linesArr.length || (extractedText ? extractedText.split('\n').length : 0),
             detectedStyle: style,
