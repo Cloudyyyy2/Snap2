@@ -392,3 +392,26 @@ def test_grocery_lexicon_json_is_actively_loaded():
     for item in ("zucchini", "quinoa", "sriracha", "croissant", "cilantro", "avocados"):
         assert item in GROCERY_CORE_SET
     assert "zucchini" in correct_text_with_lexicon("milk\neggs\nzuchini", capture_mode="auto").lower()
+
+
+def test_wikipedia_sidebar_mutation_and_bilingual_grocery_fixes():
+    """Mutated Wikipedia sidebar hallucinations must be dropped; bilingual grocery misreads must repair."""
+    wiki_leak = "Help learn to editCommunity total recent changesUpload fill"
+    assert detect_and_clean_hallucination(wiki_leak) == ""
+
+    sample = (
+        "uhip cream\n"
+        "Children touch pasta\n"
+        "cheddar S9\n"
+        "test Uhuevis\n"
+        "Kettle potato cup\n"
+        "Soosplatanos (gun)"
+    )
+    out = correct_text_with_lexicon(sample, capture_mode="auto")
+    low = out.lower()
+    assert "whip cream" in low
+    assert "children toothpaste" in low
+    assert "cheddar sq." in low
+    assert "huevos" in low
+    assert "kettle potato chip" in low
+    assert "good platanos (green)" in low

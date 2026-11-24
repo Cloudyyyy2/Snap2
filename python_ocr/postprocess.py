@@ -183,6 +183,12 @@ MISREAD_ALIASES: Dict[str, str] = {
     "jolnun": "salmon",
     "sundied": "sundried",
     "hundied": "sundried",
+    "uhip": "whip",
+    "uhuevis": "huevos",
+    "huevis": "huevos",
+    "sherd": "shred",
+    "mo33a": "mozza",
+    "no33a": "mozza",
 }
 
 VISUAL_CONFUSION_PAIRS = {
@@ -194,6 +200,7 @@ VISUAL_CONFUSION_PAIRS = {
     ("p", "s"), ("s", "p"), ("f", "t"), ("t", "f"), ("k", "h"), ("h", "k"),
     ("b", "v"), ("v", "b"), ("d", "t"), ("t", "d"), ("a", "r"), ("r", "a"),
     ("u", "n"), ("n", "u"), ("i", "r"), ("r", "i"), ("w", "o"), ("o", "w"),
+    ("w", "u"), ("u", "w"), ("g", "s"), ("s", "g"),
     ("y", "g"), ("g", "y"), ("b", "d"), ("d", "b"), ("p", "h"), ("h", "p"),
 }
 
@@ -206,7 +213,12 @@ _MONTH_OR_DATE_WORD_RE = re.compile(
 )
 _WIKI_SIDEBAR_PATTERNS = (
     re.compile(r"related\s*changes", re.I),
-    re.compile(r"upload\s*file", re.I),
+    re.compile(r"recent\s*changes", re.I),
+    re.compile(r"upload\s*fil[el]", re.I),
+    re.compile(r"learn\s*to\s*edit", re.I),
+    re.compile(r"community\s*(?:portal|total)", re.I),
+    re.compile(r"what\s*links\s*here", re.I),
+    re.compile(r"printable\s*version", re.I),
     re.compile(r"special\s*pages", re.I),
     re.compile(r"permanent\s*link", re.I),
     re.compile(r"page\s*information", re.I),
@@ -249,7 +261,9 @@ def detect_and_clean_hallucination(text: str) -> str:
             continue
         wiki_matches = sum(1 for pat in _WIKI_SIDEBAR_PATTERNS if pat.search(s))
         if wiki_matches >= 2 or re.search(
-            r"related\s*changes|special\s*pages|permanent\s*link|page\s*information|cite\s*this\s*page|wikidata\s*item",
+            r"related\s*changes|recent\s*changes|learn\s*to\s*edit|community\s*(?:portal|total)|"
+            r"upload\s*fil[el]|what\s*links\s*here|printable\s*version|"
+            r"special\s*pages|permanent\s*link|page\s*information|cite\s*this\s*page|wikidata\s*item",
             s,
             re.I,
         ):
@@ -683,8 +697,12 @@ def correct_grocery_context(text: str) -> str:
         (r"\bmedical\s+cheese\b", "mexican cheese"),
         (r"\bparmesan(?:'?s)?\s+(?:spend|send|sherd)\b", "parmesan shred"),
         (r"\bbrier\s+sheets\b", "dryer sheets"),
-        (r"\b(?:sood|soap)\s+platanos\b", "good platanos"),
+        (r"\b(?:sood|soap|soos)\s*pl[aá]tanos\b", "good platanos"),
         (r"\(\s*gun\s*\)", "(green)"),
+        (r"\bchildren\s+touch\s+pasta\b", "Children toothpaste"),
+        (r"\bcheddar\s+s9\b", "cheddar sq."),
+        (r"\bkettle\s+potato\s+cup\b", "Kettle potato chip"),
+        (r"\b(?:test\s+)?uhuev[io]s\b", "huevos"),
         (r"\bpan(?:an)?\s+chocolat\b", "Pain au chocolat"),
         (r"\btimatrel\b", "tomatoes"),
         (r"\bvirwilli\b", lambda m: _match_case(m.group(0), "broccoli")),

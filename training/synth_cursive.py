@@ -97,16 +97,21 @@ ISSUE_PROFILES: Tuple[str, ...] = (
     "missing_letter_pixels",
     "eroded_thin_letters",
     "adjacent_bleed",
+    "crossing_loop_slash",
+    "touching_punctuation",
     "spiral_edge",
 )
 
-# Words covering every letter a-z so every cursive letter gets missing-pixel training samples
+# Words covering every letter a-z, bilingual accents, tailed cursive letters, and punctuation
 ALPHABET_COVERAGE_WORDS: Tuple[str, ...] = (
     "avocado", "broccoli", "cilantro", "doughnut", "eggplant", "focaccia",
     "garlic", "hummus", "icing", "jalapeno", "kombucha", "lettuce",
     "mozzarella", "noodles", "oregano", "parmesan", "quinoa", "rosemary",
     "spinach", "tomatoes", "udon", "vinaigrette", "watermelon", "xanthan",
     "yogurt", "zucchini", "jazz", "quartz", "fizz", "wax", "box", "extra",
+    "whip cream", "Drier sheets", "toothpaste", "mexican cheese", "cheddar sq.",
+    "fresh mozza", "huevos", "pita chips (optional)", "Kettle potato chip",
+    "corn chip (optional)", "malta", "good platanos (green)", "pan:",
     "123", "456", "789", "2026", "500g", "2kg", "12oz",
 )
 
@@ -193,6 +198,14 @@ def render_cursive_sample(text: str, font_path: Path, rng: random.Random, issue:
                 draw.line([(bx, 0), (bx + rng.randint(-4, 4), rng.randint(6, 12))], fill=ink_val + 20, width=2)
             else:
                 draw.line([(bx, h - 1), (bx + rng.randint(-4, 4), h - rng.randint(6, 12))], fill=ink_val + 20, width=2)
+
+    # Extreme crossing descender/tail loop slashing across the word (e.g. long p/f/y loop from line above)
+    if issue == "crossing_loop_slash":
+        sx = rng.randint(pad_x, max(pad_x + 8, w - pad_x))
+        ex = max(2, min(w - 2, sx + rng.randint(-28, 28)))
+        draw.line([(sx, 0), (ex, h - 1)], fill=min(130, ink_val + 25), width=rng.choice([1, 2]))
+        if rng.random() < 0.5:
+            draw.arc([min(sx, ex) - 8, -4, max(sx, ex) + 8, h // 2], 0, 180, fill=min(130, ink_val + 25), width=1)
 
     draw.text((pad_x - bbox[0], pad_y - bbox[1]), text, fill=ink_val, font=font)
     arr = np.array(img, dtype=np.uint8)
@@ -329,6 +342,9 @@ def generate_dataset(out_dir: Path, count: int, seed: int = 42, fonts_dir: Path 
                 text = text[0].upper() + text[1:].lower()
             else:
                 text = text.upper()
+
+        if issue == "touching_punctuation" and "(" not in text and ":" not in text:
+            text = rng.choice([f"({text})", f"{text}:", f"({text}", f"{text}."])
 
         img = render_cursive_sample(text, font_path, rng, issue=issue)
         fname = f"synth_{idx:06d}.png"
