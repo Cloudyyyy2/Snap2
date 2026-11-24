@@ -19,7 +19,9 @@ from python_ocr.postprocess import (
 )
 from python_ocr.preprocess import (
     LineBox,
+    binarize_adaptive,
     deslant_grayscale,
+    enhance_contrast,
     remove_ruled_lines,
     run_preprocessing,
     strip_line_edge_bleeds,
@@ -347,3 +349,36 @@ def test_real_notebook_grocery_list_no_hallucinations():
         assert expected in text_lower, f"Missing {expected!r} in {res['text']!r}"
     assert ("pain au chocolat" in text_lower) or ("pan au chocolat" in text_lower)
     assert ("broccoli" in text_lower) or ("brocolli" in text_lower)
+
+
+def test_adaptive_binary_preserves_thin_cursive_strokes_and_crossings():
+    """Hysteresis Sauvola + bilateral filter must keep thin 1-2px cursive loops intact across faint rules."""
+    img = np.full((120, 260), 245, dtype=np.uint8)
+    # Faint horizontal notebook rule
+    cv2.line(img, (0, 62), (259, 62), 200, 1)
+    # Draw a thin 1-2px cursive-like loop crossing the rule (core dark, top arch fainter)
+    cv2.ellipse(img, (130, 60), (24, 18), 0, 0, 360, 145, 1)
+    cv2.line(img, (106, 48), (106, 78), 70, 2)
+    cv2.line(img, (154, 48), (154, 78), 70, 2)
+
+    cleaned = remove_ruled_lines(img)
+    contrast = enhance_contrast(cleaned)
+    binary = binarize_adaptive(contrast, window=25, k=0.18)
+
+    # The loop + stems should remain a single connected foreground ink region (no severe fragmentation)
+    ink = (binary == 0).astype(np.uint8)
+    assert int(np.count_nonzero(ink)) >= 80
+    # Top arch of ellipse at y=42 should still have ink pixels
+    assert int(np.count_nonzero(ink[38:48, 115:145])) > 0
+
+
+def test_grocery_autocorrect_prevents_false_swaps_in_auto_mode():
+    """Auto-mode grocery correction must never snap 'tomorrow' -> 'onion' or 'Sundried tomatoes' -> 'hundred'."""
+    sample = "milk\neggs\nPan a chocolat\nlunch for tormw\nlunch for tomorrow\nhundred parshel\nSundied parshel"
+    out = correct_text_with_lexicon(sample, capture_mode="auto")
+    lower = out.lower()
+    assert "onion" not in lower, f"Unexpected 'onion' swap in {out!r}"
+    assert "hundred" not in lower, f"Unexpected 'hundred' swap in {out!r}"
+    assert "pain au chocolat" in lower
+    assert lower.count("lunch for tomorrow") == 2
+    assert lower.count("sundried tomatoes") == 2

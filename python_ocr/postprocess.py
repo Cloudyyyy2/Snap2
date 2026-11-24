@@ -81,8 +81,19 @@ GROCERY_CORE_WORDS: Tuple[str, ...] = (
     "apple", "banana", "orange", "tomato", "tomatoes", "onion", "garlic", "lettuce", "spinach",
     "avocado", "broccoli", "yogurt", "cereal", "coffee", "tea", "juice", "water",
     "sugar", "salt", "pepper", "flour", "oil", "soap", "shampoo", "detergent", "towels",
+    "salmon", "asparagus", "bacon", "turkey", "mince", "sundried", "chocolat", "chocolate",
+    "pain", "crisps", "cucumber", "carrot", "carrots", "strawberry", "strawberries",
+    "blueberry", "blueberries", "sausage", "ham", "steak", "shrimp", "tuna", "tofu",
+    "oatmeal", "granola", "bagels", "bagel", "croissant", "muffin", "hummus", "salsa",
+    "cilantro", "basil", "ginger", "lemon", "lime", "noodles", "olives", "mushrooms",
 )
 GROCERY_CORE_SET = set(GROCERY_CORE_WORDS)
+
+# Common non-grocery context words that must never be overwritten by grocery snapping
+_NON_GROCERY_PROTECTED = {
+    "tomorrow", "today", "tonight", "lunch", "dinner", "breakfast",
+    "morning", "evening", "afternoon", "weekend", "for", "with", "sundried",
+}
 
 OCR_CONFUSION_RULES: Tuple[Tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"rn"), "m"),
@@ -107,9 +118,18 @@ MISREAD_ALIASES: Dict[str, str] = {
     "vjoulli": "broccoli",
     "viralli": "broccoli",
     "timmav": "tomorrow",
+    "tormw": "tomorrow",
+    "omonw": "tomorrow",
+    "tomon": "tomorrow",
     "spinod": "spinach",
     "spinad": "spinach",
+    "spingd": "spinach",
+    "spind": "spinach",
+    "botm": "bacon",
+    "batm": "bacon",
     "jolnun": "salmon",
+    "sundied": "sundried",
+    "hundied": "sundried",
 }
 
 VISUAL_CONFUSION_PAIRS = {
@@ -383,6 +403,20 @@ def build_ligature_variants(word: str) -> List[str]:
     return list(all_variants.keys())
 
 
+def _phonetic_key(word: str) -> str:
+    """Lightweight offline consonant-skeleton phonetic key (Metaphone-lite)."""
+    w = re.sub(r"[^a-z]", "", word.lower())
+    if not w:
+        return ""
+    # Normalize common phonetic equivalents
+    w = w.replace("ph", "f").replace("ck", "k").replace("ch", "k").replace("sh", "s").replace("qu", "k")
+    first = w[0]
+    rest = re.sub(r"[aeiouyh]", "", w[1:])
+    # Collapse consecutive duplicate consonants
+    key = re.sub(r"(.)\1+", r"\1", first + rest)
+    return key
+
+
 def repair_conservative_phrases(text: str) -> str:
     if not text:
         return text
@@ -393,19 +427,19 @@ def repair_conservative_phrases(text: str) -> str:
         flags=re.I,
     )
     out = re.sub(
-        r"\b(?:pa(?:i?n)\s+(?:an|au)|pa[nm]a?[nu]?)\s+ch[oa]{0,2}[cr]?o?lat\b",
+        r"\b(?:pa(?:i?n)\s+(?:a|an|au)|pa[nm]a?[nu]?)\s+ch[oa]{0,2}[cr]?o?lat\b",
         "Pain au chocolat",
         out,
         flags=re.I,
     )
     out = re.sub(
-        r"\bsundried\s+(?:torthel|parshel|parcel|tor[a-z]{2,5})\b",
+        r"\b(?:[sh]undr?ied|hundred)\s+(?:torthel|parshel|parcel|turchel|to[nr][a-z]{2,5}|toma[a-z]{1,5})\b",
         "Sundried tomatoes",
         out,
         flags=re.I,
     )
     out = re.sub(
-        r"\blunch\s+(?:fir|fiy|fr|fm|fri)\s+(?:tomorrow|t[io]rm{1,2}w|timmav)\b",
+        r"\blunch\s+(?:for|fir|fiy|fr|fm|fri)\s+(?:tomorrow|t[io]rm{1,2}w|timmav|omonw?|tomon)\b",
         "lunch for tomorrow",
         out,
         flags=re.I,
@@ -619,6 +653,7 @@ def correct_grocery_context(text: str) -> str:
             if (
                 len(lower) < 3
                 or lower in GROCERY_CORE_SET
+                or lower in _NON_GROCERY_PROTECTED
                 or lower.isdigit()
                 or re.match(r"^\$?\d+([.:/]\d+)?(am|pm)?$", core, re.I)
                 or (len(lower) <= 4 and lower in LEXICON_SET)
@@ -627,6 +662,7 @@ def correct_grocery_context(text: str) -> str:
                 continue
 
             is_cap = bool(core) and core[0].isupper()
+            lower_phon = _phonetic_key(lower)
             best_word: str | None = None
             best_score = float("inf")
             best_d = 99
@@ -634,14 +670,19 @@ def correct_grocery_context(text: str) -> str:
                 if abs(len(g_word) - len(lower)) > 2:
                     continue
                 d = damerau_levenshtein(lower, g_word)
-                max_allowed = 2 if len(lower) >= 4 else 1
+                max_allowed = 2 if len(lower) >= 5 else 1
                 if d > max_allowed:
                     continue
-                if len(lower) <= 5 and lower[0] != g_word[0] and (lower[0], g_word[0]) not in VISUAL_CONFUSION_PAIRS:
+                first_ok = lower[0] == g_word[0] or (lower[0], g_word[0]) in VISUAL_CONFUSION_PAIRS
+                phon_match = bool(lower_phon) and lower_phon == _phonetic_key(g_word)
+                if d >= 2 and not (first_ok or phon_match):
+                    continue
+                if len(lower) <= 5 and not first_ok:
                     continue
                 sim = _dice_bigram(lower, g_word)
-                w_cost = weighted_handwriting_distance(lower, g_word) - sim * 0.4
-                if d <= 2 and w_cost < best_score:
+                phon_bonus = 0.25 if phon_match else 0.0
+                w_cost = weighted_handwriting_distance(lower, g_word) - sim * 0.4 - phon_bonus
+                if d <= max_allowed and w_cost < best_score:
                     best_score = w_cost
                     best_word = g_word
                     best_d = d

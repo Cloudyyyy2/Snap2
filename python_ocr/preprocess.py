@@ -254,7 +254,7 @@ def remove_ruled_lines(gray: np.ndarray) -> np.ndarray:
     vert_above[2:, :] = inv[:-2, :]
     vert_below = np.zeros_like(inv)
     vert_below[:-2, :] = inv[2:, :]
-    cross_protect = (inv > 85) & ((vert_above > 65) | (vert_below > 65))
+    cross_protect = (inv > 45) & ((vert_above > 40) | (vert_below > 40))
     rule_mask[cross_protect] = False
 
     mask_u8 = rule_mask.astype(np.uint8) * 255
@@ -264,8 +264,8 @@ def remove_ruled_lines(gray: np.ndarray) -> np.ndarray:
 
 
 def enhance_contrast(gray: np.ndarray) -> np.ndarray:
-    """Denoise gently and apply percentile ink-to-paper stretch (matches enhanceInkContrast)."""
-    denoised = cv2.medianBlur(gray, 3)
+    """Denoise paper grain with edge-preserving bilateral filter and stretch ink contrast."""
+    denoised = cv2.bilateralFilter(gray, 5, 22, 22)
     p_low = float(np.percentile(denoised, 2.0))
     p_high = float(np.percentile(denoised, 88.0))
     if p_high - p_low < 12.0:
@@ -275,16 +275,38 @@ def enhance_contrast(gray: np.ndarray) -> np.ndarray:
 
 
 def binarize_adaptive(gray: np.ndarray, window: int = 25, k: float = 0.18) -> np.ndarray:
-    """Vectorized Sauvola local thresholding producing 0=ink, 255=paper."""
+    """Hysteresis Sauvola local thresholding with intra-word stroke closing (0=ink, 255=paper)."""
     win = max(3, int(window) | 1)
     f = gray.astype(np.float32)
     mean = cv2.boxFilter(f, ddepth=-1, ksize=(win, win), borderType=cv2.BORDER_REPLICATE)
     sq_mean = cv2.boxFilter(f * f, ddepth=-1, ksize=(win, win), borderType=cv2.BORDER_REPLICATE)
     var = np.maximum(0.0, sq_mean - mean * mean)
     std = np.sqrt(var)
-    thresh = mean * (1.0 + k * ((std / 128.0) - 1.0))
-    binary = np.where(f <= thresh, 0, 255).astype(np.uint8)
-    return binary
+
+    # Lower k = higher threshold (more sensitive to thin cursive ink)
+    k_strong = min(float(k), 0.16)
+    k_weak = max(0.06, k_strong * 0.55)
+    thresh_strong = mean * (1.0 + k_strong * ((std / 128.0) - 1.0))
+    thresh_weak = mean * (1.0 + k_weak * ((std / 128.0) - 1.0))
+
+    strong = f <= np.minimum(thresh_strong, mean - 12.0)
+    if not np.any(strong):
+        return np.full(gray.shape, 255, dtype=np.uint8)
+
+    weak = (f <= np.minimum(thresh_weak, mean - 16.0)) | strong
+    num_labels, labels = cv2.connectedComponents(weak.astype(np.uint8), connectivity=8)
+    if num_labels <= 1:
+        fg = strong.astype(np.uint8)
+    else:
+        strong_labels = np.unique(labels[strong])
+        keep_lut = np.zeros(num_labels, dtype=np.uint8)
+        keep_lut[strong_labels] = 1
+        keep_lut[0] = 0
+        fg = keep_lut[labels]
+
+    # Bridge 1px intra-letter pen gaps without fusing vertically separated lines
+    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((2, 2), dtype=np.uint8))
+    return np.where(fg > 0, 0, 255).astype(np.uint8)
 
 
 def strip_spiral_and_corner_artifacts(binary: np.ndarray) -> np.ndarray:
@@ -706,8 +728,8 @@ def segment_lines(binary: np.ndarray) -> List[LineBox]:
         if len(xs) == 0:
             continue
 
-        # Outlier-resistant x0, x1 computation (drop tiny far-away rule specks)
-        outlier_gap = max(48, int(round((py1 - py0 + 1) * 2.2)))
+        # Outlier-resistant x0, x1 computation (drop tiny far-away rule/margin specks)
+        outlier_gap = max(40, int(round((py1 - py0 + 1) * 1.6)))
         runs: List[Tuple[int, int, int, int]] = []
         r_start = int(xs[0])
         r_prev = int(xs[0])
@@ -727,7 +749,7 @@ def segment_lines(binary: np.ndarray) -> List[LineBox]:
 
         max_run_ink = max(r[2] for r in runs)
         if max_run_ink >= 40 and len(runs) > 1:
-            kept_runs = [r for r in runs if r[2] > 25 and r[3] > 3]
+            kept_runs = [r for r in runs if r[2] > 25 and r[3] > 4]
             if not kept_runs:
                 kept_runs = runs
         else:
@@ -978,7 +1000,7 @@ def run_preprocessing(
     binary = strip_spiral_and_corner_artifacts(raw_bin)
     removed_mask = ((raw_bin == 0) & (binary == 255)).astype(np.uint8) * 255
     if np.count_nonzero(removed_mask) > 0:
-        removed_dil = cv2.dilate(removed_mask, np.ones((3, 3), dtype=np.uint8), iterations=1) > 0
+        removed_dil = cv2.dilate(removed_mask, np.ones((5, 5), dtype=np.uint8), iterations=1) > 0
         contrast[removed_dil] = 255
         parseq_gray[removed_dil] = 255
     applied_steps.append("spiral-artifact-filter")
