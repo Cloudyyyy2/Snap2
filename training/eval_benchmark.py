@@ -29,8 +29,13 @@ def _edit_distance(a: str, b: str) -> int:
 def evaluate_model(model_path: Path, manifest_path: Path, limit: int = 0) -> dict:
     engine = ParseqOcrEngine(model_dir=model_path.parent)
     engine.model_path = model_path
+    sidecar_cfg = model_path.parent / f"{model_path.stem}_config.json"
+    if sidecar_cfg.is_file():
+        engine.config_path = sidecar_cfg
     if not engine.is_available():
-        raise FileNotFoundError(f"ONNX model not found at {model_path}")
+        raise FileNotFoundError(
+            f"ONNX model or config not found: model={engine.model_path} config={engine.config_path}"
+        )
 
     base = manifest_path.parent
     samples: List[Tuple[Path, str]] = []

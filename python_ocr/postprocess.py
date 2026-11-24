@@ -166,6 +166,7 @@ OCR_CONFUSION_RULES: Tuple[Tuple[re.Pattern[str], str], ...] = (
 # Explicit known cursive/PARSeq misreads kept OUT of LEXICON_SET so they never short-circuit
 MISREAD_ALIASES: Dict[str, str] = {
     "browlli": "broccoli",
+    "bioculli": "broccoli",
     "virwilli": "broccoli",
     "vioulli": "broccoli",
     "vjoulli": "broccoli",
@@ -180,6 +181,7 @@ MISREAD_ALIASES: Dict[str, str] = {
     "spind": "spinach",
     "botm": "bacon",
     "batm": "bacon",
+    "bakm": "bacon",
     "jolnun": "salmon",
     "sundied": "sundried",
     "hundied": "sundried",
@@ -494,13 +496,13 @@ def repair_conservative_phrases(text: str) -> str:
         flags=re.I,
     )
     out = re.sub(
-        r"\b(?:pa(?:i?n)\s+(?:a|an|au)|pa[nm]a?[nu]?)\s+ch[oa]{0,2}[cr]?o?lat\b",
+        r"\b(?:pa(?:i?n)\s+(?:a|an|am|au)|pa[nm]a?[nu]?)\s+[ac]h[oa]{0,3}[crl]?o?l?[at]{1,2}\b",
         "Pain au chocolat",
         out,
         flags=re.I,
     )
     out = re.sub(
-        r"\b(?:[sh]undr?ied|hundred)\s+(?:torthel|parshel|parcel|turchel|to[nr][a-z]{2,5}|toma[a-z]{1,5})\b",
+        r"\b(?:[sh]undr?ied|hundred|jun\s+dried)\s+(?:torthel|parshel|parcel|turchel|firatrel|to[nr][a-z]{2,5}|toma[a-z]{1,5})\b",
         "Sundried tomatoes",
         out,
         flags=re.I,

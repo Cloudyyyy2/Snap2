@@ -202,26 +202,39 @@ class ParseqOcrEngine:
         assert self._session is not None
         assert self._cfg is not None
 
-        _, target_h, target_w = self._cfg["input_shape"]  # [3, 32, 128]
-        mean = np.array(self._cfg["mean"], dtype=np.float32)[:, None, None]
-        std = np.array(self._cfg["std"], dtype=np.float32)[:, None, None]
-        vocab: str = self._cfg["vocab"]
-        eos_idx = len(vocab)
-
-        h, w = crop_gray.shape[:2]
-        scale = min(target_w / max(1, w), target_h / max(1, h))
-        nw = max(1, min(target_w, int(round(w * scale))))
-        nh = max(1, min(target_h, int(round(h * scale))))
-        resized = cv2.resize(crop_gray, (nw, nh), interpolation=cv2.INTER_CUBIC)
-        canvas = np.full((target_h, target_w), 255, dtype=np.uint8)
-        y_off = (target_h - nh) // 2
-        x_off = (target_w - nw) // 2
-        canvas[y_off : y_off + nh, x_off : x_off + nw] = resized
+        if "itos" in self._cfg:
+            # baudm/parseq format: itos[0] == '[E]', normalized with mean=0.5, std=0.5
+            itos: List[str] = list(self._cfg["itos"])
+            target_h, target_w = self._cfg.get("img_size", [32, 128])
+            mean = np.array(self._cfg.get("mean", [0.5, 0.5, 0.5]), dtype=np.float32)[:, None, None]
+            std = np.array(self._cfg.get("std", [0.5, 0.5, 0.5]), dtype=np.float32)[:, None, None]
+            eos_idx = itos.index("[E]") if "[E]" in itos else 0
+            # Direct resize matches torchvision T.Resize((32, 128)) used during PARSeq fine-tuning
+            canvas = cv2.resize(crop_gray, (int(target_w), int(target_h)), interpolation=cv2.INTER_CUBIC)
+            is_itos = True
+        else:
+            # OnnxTR format: vocab[0..N-1], eos_idx == N
+            _, target_h, target_w = self._cfg["input_shape"]  # [3, 32, 128]
+            mean = np.array(self._cfg["mean"], dtype=np.float32)[:, None, None]
+            std = np.array(self._cfg["std"], dtype=np.float32)[:, None, None]
+            vocab: str = self._cfg["vocab"]
+            eos_idx = len(vocab)
+            h, w = crop_gray.shape[:2]
+            scale = min(target_w / max(1, w), target_h / max(1, h))
+            nw = max(1, min(target_w, int(round(w * scale))))
+            nh = max(1, min(target_h, int(round(h * scale))))
+            resized = cv2.resize(crop_gray, (nw, nh), interpolation=cv2.INTER_CUBIC)
+            canvas = np.full((target_h, target_w), 255, dtype=np.uint8)
+            y_off = (target_h - nh) // 2
+            x_off = (target_w - nw) // 2
+            canvas[y_off : y_off + nh, x_off : x_off + nw] = resized
+            is_itos = False
 
         rgb = np.stack([canvas, canvas, canvas], axis=0).astype(np.float32) / 255.0
         norm = ((rgb - mean) / std)[None, :, :, :]
 
-        logits = self._session.run(None, {"input": norm})[0][0]  # (33, 127)
+        in_name = self._session.get_inputs()[0].name
+        logits = self._session.run(None, {in_name: norm})[0][0]
         chars: List[str] = []
         probs: List[float] = []
         for t in range(logits.shape[0]):
@@ -229,9 +242,15 @@ class ParseqOcrEngine:
             best_idx = int(np.argmax(row))
             if best_idx == eos_idx:
                 break
-            if best_idx < eos_idx:
-                exp_r = np.exp(row - float(np.max(row)))
-                p = float(exp_r[best_idx] / np.sum(exp_r))
+            exp_r = np.exp(row - float(np.max(row)))
+            p = float(exp_r[best_idx] / np.sum(exp_r))
+            if is_itos:
+                if 0 <= best_idx < len(itos):
+                    tok = itos[best_idx]
+                    if tok not in ("[E]", "[B]", "[P]"):
+                        chars.append(tok)
+                        probs.append(p)
+            elif best_idx < eos_idx:
                 chars.append(vocab[best_idx])
                 probs.append(p)
 

@@ -66,6 +66,17 @@ def promote_model(
     print(f"\nBacked up active model -> {backup_path}")
     print(f"Installed candidate -> {active_model_path}")
 
+    active_cfg = active_model_path.parent / "config.json"
+    backup_cfg = active_model_path.parent / "config.json.bak"
+    cand_cfg = candidate_path.parent / f"{candidate_path.stem}_config.json"
+    swapped_cfg = False
+    if cand_cfg.is_file() and active_cfg.is_file():
+        shutil.copy2(active_cfg, backup_cfg)
+        shutil.copy2(cand_cfg, active_cfg)
+        swapped_cfg = True
+        print(f"Backed up active config -> {backup_cfg}")
+        print(f"Installed candidate config -> {active_cfg}")
+
     # Run full Python OCR pytest suite as final safety gate
     print("\nRunning pytest python_ocr/tests -v ...")
     proc = subprocess.run(
@@ -76,6 +87,8 @@ def promote_model(
     if proc.returncode != 0:
         print("\n[ROLLBACK] Pytest failed! Restoring previous model.onnx from backup.")
         shutil.copy2(backup_path, active_model_path)
+        if swapped_cfg and backup_cfg.is_file():
+            shutil.copy2(backup_cfg, active_cfg)
         return False
 
     # Record promotion in training/model_history.json

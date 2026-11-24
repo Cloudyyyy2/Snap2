@@ -1,0 +1,11 @@
+[
+  {
+    "timestamp": "2026-11-24T22:52:31.781474+00:00",
+    "candidate": "training\\candidates\\parseq_cursive.onnx",
+    "baseline_cer": 0.0664,
+    "candidate_cer": 0.0389,
+    "baseline_exact": 0.6933,
+    "candidate_exact": 0.7467,
+    "samples_evaluated": 150
+  }
+]
