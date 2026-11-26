@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -63,8 +63,10 @@ def decode_base64_image(image_input: str) -> bytes:
 
 def load_upright_grayscale(image_bytes: bytes, max_width: int = 1800) -> np.ndarray:
     """Load image bytes with EXIF orientation, composite alpha onto white, and resize."""
-    pil_img = Image.open(io.BytesIO(image_bytes))
-    pil_img = ImageOps.exif_transpose(pil_img)
+    pil_img: Image.Image = Image.open(io.BytesIO(image_bytes))
+    transposed = ImageOps.exif_transpose(pil_img)
+    if transposed is not None:
+        pil_img = transposed
 
     if pil_img.mode in ("RGBA", "LA") or (pil_img.mode == "P" and "transparency" in pil_img.info):
         rgba = pil_img.convert("RGBA")
@@ -426,7 +428,7 @@ def strip_spiral_and_corner_artifacts(binary: np.ndarray) -> np.ndarray:
     ]
     if strip_comps:
         visited = [False] * len(strip_comps)
-        qualifying_clusters: List[dict] = []
+        qualifying_clusters: List[Dict[str, Any]] = []
         for i in range(len(strip_comps)):
             if visited[i]:
                 continue
@@ -783,7 +785,7 @@ def strip_line_edge_bleeds(binary: np.ndarray, box: LineBox) -> np.ndarray:
     mid_bot = int(round(lh * 0.78))
     iso_gap = max(10, int(round(lh * 0.24)))
 
-    cc_boxes: List[Tuple[int, int, int, int, int, int, int]] = []
+    cc_boxes: List[Tuple[int, int, int, int, int, int, int, int]] = []
     for idx in range(1, num_labels):
         lx0 = int(stats[idx, cv2.CC_STAT_LEFT])
         ly0 = int(stats[idx, cv2.CC_STAT_TOP])
