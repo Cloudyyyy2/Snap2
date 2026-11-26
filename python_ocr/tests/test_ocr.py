@@ -415,3 +415,38 @@ def test_wikipedia_sidebar_mutation_and_bilingual_grocery_fixes():
     assert "huevos" in low
     assert "kettle potato chip" in low
     assert "good platanos (green)" in low
+
+
+def test_parseq_topk_beam_rescores_uncertain_letter_to_lexicon():
+    """Top-K logit beam decoding must promote a high-probability 2nd-choice lexicon match over greedy noise."""
+    eng = get_parseq_engine()
+    if not eng.is_available():
+        pytest.skip("Offline PARSeq model not present")
+    eng._ensure_loaded()
+    assert eng._cfg is not None
+    is_itos = "itos" in eng._cfg
+    if is_itos:
+        itos = list(eng._cfg["itos"])
+        v_size = len(itos)
+        eos_idx = itos.index("[E]")
+        idx_of = lambda ch: itos.index(ch)
+    else:
+        vocab = eng._cfg["vocab"]
+        v_size = len(vocab) + 1
+        eos_idx = len(vocab)
+        idx_of = lambda ch: vocab.index(ch)
+
+    # Construct a synthetic probability matrix where greedy is "bakon" (not in lexicon)
+    # but position 2 has 0.52 for 'k' and 0.44 for 'c' -> "bacon" (in LEXICON_SET)
+    probs = np.full((6, v_size), 1e-4, dtype=np.float32)
+    for t, ch in enumerate("bacon"):
+        probs[t, idx_of(ch)] = 0.96
+    probs[2, idx_of("c")] = 0.44
+    probs[2, idx_of("k")] = 0.52
+    probs[5, eos_idx] = 0.99
+    probs /= probs.sum(axis=-1, keepdims=True)
+
+    greedy_only, _ = eng._decode_probs(probs, is_itos, use_lexicon_beam=False)
+    beam_text, _ = eng._decode_probs(probs, is_itos, use_lexicon_beam=True)
+    assert greedy_only == "bakon"
+    assert beam_text == "bacon"

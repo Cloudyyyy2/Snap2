@@ -197,28 +197,18 @@ class ParseqOcrEngine:
                 str(self.model_path), sess_options=opts, providers=["CPUExecutionProvider"]
             )
 
-    def recognize_word(self, crop_gray: np.ndarray) -> Tuple[str, float]:
-        self._ensure_loaded()
-        assert self._session is not None
+    def _prepare_input(self, crop_gray: np.ndarray) -> Tuple[np.ndarray, bool]:
         assert self._cfg is not None
-
         if "itos" in self._cfg:
-            # baudm/parseq format: itos[0] == '[E]', normalized with mean=0.5, std=0.5
-            itos: List[str] = list(self._cfg["itos"])
             target_h, target_w = self._cfg.get("img_size", [32, 128])
             mean = np.array(self._cfg.get("mean", [0.5, 0.5, 0.5]), dtype=np.float32)[:, None, None]
             std = np.array(self._cfg.get("std", [0.5, 0.5, 0.5]), dtype=np.float32)[:, None, None]
-            eos_idx = itos.index("[E]") if "[E]" in itos else 0
-            # Direct resize matches torchvision T.Resize((32, 128)) used during PARSeq fine-tuning
             canvas = cv2.resize(crop_gray, (int(target_w), int(target_h)), interpolation=cv2.INTER_CUBIC)
             is_itos = True
         else:
-            # OnnxTR format: vocab[0..N-1], eos_idx == N
             _, target_h, target_w = self._cfg["input_shape"]  # [3, 32, 128]
             mean = np.array(self._cfg["mean"], dtype=np.float32)[:, None, None]
             std = np.array(self._cfg["std"], dtype=np.float32)[:, None, None]
-            vocab: str = self._cfg["vocab"]
-            eos_idx = len(vocab)
             h, w = crop_gray.shape[:2]
             scale = min(target_w / max(1, w), target_h / max(1, h))
             nw = max(1, min(target_w, int(round(w * scale))))
@@ -232,31 +222,122 @@ class ParseqOcrEngine:
 
         rgb = np.stack([canvas, canvas, canvas], axis=0).astype(np.float32) / 255.0
         norm = ((rgb - mean) / std)[None, :, :, :]
+        return norm, is_itos
 
-        in_name = self._session.get_inputs()[0].name
-        logits = self._session.run(None, {in_name: norm})[0][0]
+    def _logits_to_probs(self, logits: np.ndarray) -> np.ndarray:
+        shifted = logits - np.max(logits, axis=-1, keepdims=True)
+        exp_l = np.exp(shifted)
+        return exp_l / np.sum(exp_l, axis=-1, keepdims=True)
+
+    def _decode_probs(self, prob_mat: np.ndarray, is_itos: bool, use_lexicon_beam: bool = True) -> Tuple[str, float]:
+        assert self._cfg is not None
+        if is_itos:
+            itos: List[str] = list(self._cfg["itos"])
+            eos_idx = itos.index("[E]") if "[E]" in itos else 0
+            def _idx_to_char(idx: int) -> Optional[str]:
+                if 0 <= idx < len(itos):
+                    tok = itos[idx]
+                    return None if tok in ("[E]", "[B]", "[P]") else tok
+                return None
+        else:
+            vocab: str = self._cfg["vocab"]
+            eos_idx = len(vocab)
+            def _idx_to_char(idx: int) -> Optional[str]:
+                return vocab[idx] if 0 <= idx < eos_idx else None
+
+        # Greedy decode first
         chars: List[str] = []
         probs: List[float] = []
-        for t in range(logits.shape[0]):
-            row = logits[t]
+        step_top3: List[List[Tuple[str, float]]] = []
+        for t in range(prob_mat.shape[0]):
+            row = prob_mat[t]
             best_idx = int(np.argmax(row))
             if best_idx == eos_idx:
                 break
-            exp_r = np.exp(row - float(np.max(row)))
-            p = float(exp_r[best_idx] / np.sum(exp_r))
-            if is_itos:
-                if 0 <= best_idx < len(itos):
-                    tok = itos[best_idx]
-                    if tok not in ("[E]", "[B]", "[P]"):
-                        chars.append(tok)
-                        probs.append(p)
-            elif best_idx < eos_idx:
-                chars.append(vocab[best_idx])
-                probs.append(p)
+            ch = _idx_to_char(best_idx)
+            if ch is not None:
+                chars.append(ch)
+                probs.append(float(row[best_idx]))
+                if use_lexicon_beam:
+                    top_idxs = np.argsort(row)[-3:][::-1]
+                    cands: List[Tuple[str, float]] = []
+                    for ci in top_idxs:
+                        c_idx = int(ci)
+                        if c_idx == eos_idx:
+                            continue
+                        c_ch = _idx_to_char(c_idx)
+                        if c_ch is not None and float(row[c_idx]) >= 0.08:
+                            cands.append((c_ch, float(row[c_idx])))
+                    step_top3.append(cands or [(ch, float(row[best_idx]))])
 
-        text = "".join(chars).strip()
-        conf = round(float(np.mean(probs)), 3) if probs else 0.0
-        return text, conf
+        greedy_text = "".join(chars).strip()
+        greedy_conf = round(float(np.mean(probs)), 3) if probs else 0.0
+
+        # Lightweight Top-K logit beam rescoring against LEXICON_SET when any letter is uncertain
+        if (
+            use_lexicon_beam
+            and greedy_text
+            and len(greedy_text) >= 3
+            and (greedy_conf < 0.92 or (probs and min(probs) < 0.82))
+            and greedy_text.lower() not in LEXICON_SET
+            and len(step_top3) == len(chars)
+        ):
+            beams: List[Tuple[str, float]] = [("", 0.0)]
+            for cands in step_top3:
+                top_p = cands[0][1]
+                branch = cands[:3] if top_p < 0.85 else cands[:1]
+                next_beams: List[Tuple[str, float]] = []
+                for prefix, logp in beams:
+                    for c_ch, c_p in branch:
+                        next_beams.append((prefix + c_ch, logp + float(np.log(max(c_p, 1e-6)))))
+                next_beams.sort(key=lambda x: x[1], reverse=True)
+                beams = next_beams[:8]
+
+            greedy_logp = sum(float(np.log(max(p, 1e-6))) for p in probs)
+            for cand_text, cand_logp in beams:
+                clean_c = cand_text.strip()
+                if clean_c.lower() in LEXICON_SET and (cand_logp - greedy_logp) >= -1.6:
+                    cand_conf = round(float(np.exp(cand_logp / max(1, len(clean_c)))), 3)
+                    return clean_c, max(greedy_conf, cand_conf)
+
+        return greedy_text, greedy_conf
+
+    def _shear_crop(self, crop_gray: np.ndarray, shear: float) -> np.ndarray:
+        h, w = crop_gray.shape[:2]
+        mat = np.array([[1.0, shear, -shear * h * 0.5], [0.0, 1.0, 0.0]], dtype=np.float32)
+        return cv2.warpAffine(
+            crop_gray, mat, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255
+        )
+
+    def recognize_word(self, crop_gray: np.ndarray, enable_tta: bool = True) -> Tuple[str, float]:
+        self._ensure_loaded()
+        assert self._session is not None
+        assert self._cfg is not None
+
+        in_name = self._session.get_inputs()[0].name
+        norm0, is_itos = self._prepare_input(crop_gray)
+        logits0 = self._session.run(None, {in_name: norm0})[0][0]
+        probs0 = self._logits_to_probs(logits0)
+        text0, conf0 = self._decode_probs(probs0, is_itos, use_lexicon_beam=True)
+
+        # Confidence-gated 3-view Test-Time Augmentation (0ms overhead on clear words >= 0.85)
+        if enable_tta and (not text0 or (conf0 < 0.85 and text0.lower() not in LEXICON_SET)):
+            h, w = crop_gray.shape[:2]
+            if h >= 10 and w >= 12:
+                norm_l, _ = self._prepare_input(self._shear_crop(crop_gray, -0.10))
+                norm_r, _ = self._prepare_input(self._shear_crop(crop_gray, 0.10))
+                batch = np.concatenate([norm_l, norm_r], axis=0)
+                logits_lr = self._session.run(None, {in_name: batch})[0]
+                probs_l = self._logits_to_probs(logits_lr[0])
+                probs_r = self._logits_to_probs(logits_lr[1])
+                fused_probs = 0.50 * probs0 + 0.25 * probs_l + 0.25 * probs_r
+                text_tta, conf_tta = self._decode_probs(fused_probs, is_itos, use_lexicon_beam=True)
+                tta_in_lex = text_tta.lower() in LEXICON_SET
+                orig_in_lex = text0.lower() in LEXICON_SET
+                if text_tta and ((tta_in_lex and not orig_in_lex) or conf_tta > conf0 + 0.02 or not text0):
+                    return text_tta, conf_tta
+
+        return text0, conf0
 
 
 _TROCR_ENGINE = OfflineTrOcrEngine()
